@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(export PATH=\"$HOME/.local/bin:$PATH\")",
+      "Bash(pnpm install *)",
+      "Bash(pnpm --filter @asepritesync/db typecheck)",
+      "Bash(rm -rf drizzle)",
+      "Bash(pnpm generate *)"
+    ]
+  }
+}
