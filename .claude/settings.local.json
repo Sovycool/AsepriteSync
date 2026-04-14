@@ -5,7 +5,11 @@
       "Bash(pnpm install *)",
       "Bash(pnpm --filter @asepritesync/db typecheck)",
       "Bash(rm -rf drizzle)",
-      "Bash(pnpm generate *)"
+      "Bash(pnpm generate *)",
+      "Bash(pnpm --filter @asepritesync/server typecheck)",
+      "Bash(pnpm --filter @asepritesync/server test)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)"
     ]
   }
 }
