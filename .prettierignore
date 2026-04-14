@@ -1,0 +1,6 @@
+node_modules
+dist
+.next
+coverage
+*.d.ts
+pnpm-lock.yaml

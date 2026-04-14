@@ -1,0 +1,32 @@
+{
+  "name": "asepritesync",
+  "private": true,
+  "version": "0.1.0",
+  "description": "AsepriteSync — collaborative pixel art asset management ecosystem",
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md,lua}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md,lua}\"",
+    "test": "turbo run test",
+    "typecheck": "turbo run typecheck",
+    "db:migrate": "pnpm --filter @asepritesync/db migrate",
+    "db:seed": "pnpm --filter @asepritesync/db seed",
+    "db:generate": "pnpm --filter @asepritesync/db generate"
+  },
+  "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0",
+    "eslint": "^9.0.0",
+    "eslint-config-prettier": "^9.0.0",
+    "prettier": "^3.2.0",
+    "turbo": "^2.0.0",
+    "typescript": "^5.4.0"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "packageManager": "pnpm@9.1.0"
+}
