@@ -360,46 +360,53 @@ function init(plugin)
     explorer = explorer,
   }
 
-  -- Register commands
+  -- Create the "AsepriteSync" submenu inside File > Scripts
+  plugin:newMenuGroup{
+    id    = 'asepritesync',
+    title = 'AsepriteSync',
+    group = 'file_scripts',
+  }
+
+  -- Register commands inside the submenu
   plugin:newCommand{
     id      = 'asepritesync-login',
-    title   = 'AsepriteSync: Login / Connect',
-    group   = 'file_scripts',
+    title   = 'Login / Connect',
+    group   = 'asepritesync',
     onclick = cmd_login,
   }
 
   plugin:newCommand{
     id      = 'asepritesync-explorer',
-    title   = 'AsepriteSync: Open File\xE2\x80\xA6',
-    group   = 'file_scripts',
+    title   = 'Open File\xE2\x80\xA6',
+    group   = 'asepritesync',
     onclick = cmd_explorer,
   }
 
   plugin:newCommand{
     id      = 'asepritesync-push',
-    title   = 'AsepriteSync: Push Changes',
-    group   = 'file_scripts',
+    title   = 'Push Changes',
+    group   = 'asepritesync',
     onclick = cmd_push,
   }
 
   plugin:newCommand{
     id      = 'asepritesync-upload-new',
-    title   = 'AsepriteSync: Upload New File',
-    group   = 'file_scripts',
+    title   = 'Upload New File',
+    group   = 'asepritesync',
     onclick = cmd_upload_new,
   }
 
   plugin:newCommand{
     id      = 'asepritesync-lock',
-    title   = 'AsepriteSync: Lock / Unlock File',
-    group   = 'file_scripts',
+    title   = 'Lock / Unlock File',
+    group   = 'asepritesync',
     onclick = cmd_lock_toggle,
   }
 
   plugin:newCommand{
     id      = 'asepritesync-settings',
-    title   = 'AsepriteSync: Server Settings',
-    group   = 'file_scripts',
+    title   = 'Server Settings',
+    group   = 'asepritesync',
     onclick = cmd_settings,
   }
 

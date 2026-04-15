@@ -98,18 +98,29 @@ pnpm --filter @asepritesync/web test
 
 ## Installing the Aseprite plugin
 
+**Build the extension file:**
+
+```bash
+pnpm --filter asepritesync-plugin bundle
+# → apps/plugin/asepritesync.aseprite-extension
+```
+
+**Install in Aseprite:**
+
 1. In Aseprite, go to **Edit → Preferences → Extensions**.
-2. Click **Add Extension** and select the `apps/plugin/` directory (or its `.aseprite-extension` zip if packaged).
-3. The following commands appear under the **File** script menu:
+2. Click **Add Extension** and select `apps/plugin/asepritesync.aseprite-extension`.
+3. Restart Aseprite if prompted.
+
+The commands appear in **File → Scripts → AsepriteSync**:
 
 | Command | What it does |
 |---------|-------------|
-| AsepriteSync: Login / Connect | Authenticate against your server |
-| AsepriteSync: Open File… | Browse projects and open a file |
-| AsepriteSync: Push Changes | Upload current sprite as a new version |
-| AsepriteSync: Upload New File | First-time upload to a project |
-| AsepriteSync: Lock / Unlock File | Toggle the file lock |
-| AsepriteSync: Server Settings | Change the server URL |
+| Login / Connect | Authenticate against your server |
+| Open File… | Browse projects and open a file |
+| Push Changes | Upload current sprite as a new version |
+| Upload New File | First-time upload to a project |
+| Lock / Unlock File | Toggle the file lock |
+| Server Settings | Change the server URL |
 
 ## Roles
 
