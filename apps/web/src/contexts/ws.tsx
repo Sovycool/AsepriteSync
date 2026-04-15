@@ -57,7 +57,7 @@ const MAX_BACKOFF = 30_000;
 // ---------------------------------------------------------------------------
 
 export function WsProvider({ children }: { children: React.ReactNode }) {
-  const { accessToken } = useAuth();
+  const { accessToken, loading } = useAuth();
   const qc = useQueryClient();
 
   const wsRef = useRef<WebSocket | null>(null);
@@ -171,7 +171,10 @@ export function WsProvider({ children }: { children: React.ReactNode }) {
 
   // Connect / reconnect logic
   useEffect(() => {
-    if (!accessToken) return;
+    // Wait for the initial refresh to complete before connecting.
+    // This ensures we never try to connect with a potentially stale
+    // sessionStorage token that may already be expired.
+    if (loading || !accessToken) return;
     unmountedRef.current = false;
 
     function connect() {
@@ -219,7 +222,7 @@ export function WsProvider({ children }: { children: React.ReactNode }) {
       wsRef.current = null;
       setConnected(false);
     };
-  }, [accessToken, handleMessage]);
+  }, [accessToken, loading, handleMessage]);
 
   return (
     <WsContext.Provider value={{ joinProject, updateActiveFile, presence, connected }}>
