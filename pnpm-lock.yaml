@@ -116,6 +116,9 @@ importers:
       '@types/ws':
         specifier: ^8.5.10
         version: 8.18.1
+      dotenv:
+        specifier: ^17.4.2
+        version: 17.4.2
       supertest:
         specifier: ^7.0.0
         version: 7.2.2
