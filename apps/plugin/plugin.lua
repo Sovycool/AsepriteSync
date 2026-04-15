@@ -6,6 +6,7 @@
 -- Module dependencies are resolved relative to this directory via Lua's
 -- standard require() which Aseprite maps to the extension root.
 
+local json     = require('modules.json')
 local Storage  = require('modules.storage')
 local Api      = require('modules.api')
 local Auth     = require('modules.auth')
@@ -145,7 +146,6 @@ local function cmd_push()
     return
   end
 
-  local json = require('modules.json')
   local function is_locked_by_other(f)
     return f.lockedBy ~= nil and f.lockedBy ~= json.null and f.lockedBy ~= myId
   end
@@ -322,7 +322,6 @@ local function cmd_lock_toggle()
     return
   end
 
-  local json = require('modules.json')
   local myId = auth:getUser() and auth:getUser().id or nil
   local fname = sprite.filename:match('[^/\\]+$') or 'this file'
 
