@@ -124,7 +124,7 @@ importers:
         version: 4.21.0
       vitest:
         specifier: ^1.5.0
-        version: 1.6.1(@types/node@20.19.39)(jsdom@29.0.2)
+        version: 1.6.1(@types/node@20.19.39)(jsdom@29.0.2(@noble/hashes@1.8.0))
 
   apps/web:
     dependencies:
@@ -233,7 +233,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^1.5.0
-        version: 1.6.1(@types/node@20.19.39)(jsdom@29.0.2)
+        version: 1.6.1(@types/node@20.19.39)(jsdom@29.0.2(@noble/hashes@1.8.0))
 
   packages/db:
     dependencies:
@@ -262,6 +262,9 @@ importers:
       '@types/uuid':
         specifier: ^9.0.8
         version: 9.0.8
+      dotenv:
+        specifier: ^17.4.2
+        version: 17.4.2
       drizzle-kit:
         specifier: ^0.21.4
         version: 0.21.4
@@ -2540,6 +2543,10 @@ packages:
 
   dom-accessibility-api@0.6.3:
     resolution: {integrity: sha512-7ZgogeTnjuHbo+ct10G9Ffp0mif17idi0IyWNVA/wcwcm7NPOD/WEHVP3n7n3MhXqxoIYm8d6MuZohYWIZ4T3w==}
+
+  dotenv@17.4.2:
+    resolution: {integrity: sha512-nI4U3TottKAcAD9LLud4Cb7b2QztQMUEfHbvhTH09bqXTxnSie8WnjPALV/WMCrJZ6UV/qHJ6L03OqO3LcdYZw==}
+    engines: {node: '>=12'}
 
   dreamopt@0.8.0:
     resolution: {integrity: sha512-vyJTp8+mC+G+5dfgsY+r3ckxlz+QMX40VjPQsZc5gxVAxLmi64TBoVkP54A/pRAXMXsbu2GMMBrZPxNv23waMg==}
@@ -6294,6 +6301,8 @@ snapshots:
 
   dom-accessibility-api@0.6.3: {}
 
+  dotenv@17.4.2: {}
+
   dreamopt@0.8.0:
     dependencies:
       wordwrap: 1.0.0
@@ -8113,7 +8122,7 @@ snapshots:
       '@types/node': 20.19.39
       fsevents: 2.3.3
 
-  vitest@1.6.1(@types/node@20.19.39)(jsdom@29.0.2):
+  vitest@1.6.1(@types/node@20.19.39)(jsdom@29.0.2(@noble/hashes@1.8.0)):
     dependencies:
       '@vitest/expect': 1.6.1
       '@vitest/runner': 1.6.1
