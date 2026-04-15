@@ -1,8 +1,9 @@
 "use client";
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { filesApi, type FileRecord } from "@/lib/api";
+import { filesApi, type FileRecord, type LockResult } from "@/lib/api";
 import { useAuth } from "@/contexts/auth";
+import { toast } from "@/hooks/use-toast";
 
 const qk = (projectId: string) => ["files", projectId];
 
@@ -54,10 +55,20 @@ export function useDeleteFile(projectId: string) {
 export function useLockFile(projectId: string) {
   const { accessToken } = useAuth();
   const qc = useQueryClient();
+
   return useMutation({
     mutationFn: (fileId: string) => filesApi.lock(accessToken!, fileId),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: qk(projectId) });
+    onSuccess: (result: LockResult) => {
+      qc.setQueryData<FileRecord[]>(qk(projectId), (old) =>
+        old?.map((f) =>
+          f.id === result.fileId
+            ? { ...f, lockedBy: result.lockedBy, lockExpiresAt: result.lockExpiresAt }
+            : f,
+        ),
+      );
+    },
+    onError: (err: Error) => {
+      toast({ title: "Lock failed", description: err.message, variant: "destructive", });
     },
   });
 }
@@ -65,10 +76,20 @@ export function useLockFile(projectId: string) {
 export function useUnlockFile(projectId: string) {
   const { accessToken } = useAuth();
   const qc = useQueryClient();
+
   return useMutation({
     mutationFn: (fileId: string) => filesApi.unlock(accessToken!, fileId),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: qk(projectId) });
+    onSuccess: (result: LockResult) => {
+      qc.setQueryData<FileRecord[]>(qk(projectId), (old) =>
+        old?.map((f) =>
+          f.id === result.fileId
+            ? { ...f, lockedBy: null, lockExpiresAt: null }
+            : f,
+        ),
+      );
+    },
+    onError: (err: Error) => {
+      toast({ title: "Unlock failed", description: err.message, variant: "destructive" });
     },
   });
 }

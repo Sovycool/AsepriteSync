@@ -77,7 +77,7 @@ export function createAuthController(service: AuthService) {
 
       setRefreshCookie(reply, result.refreshToken);
 
-      return reply.send(ok({ accessToken: result.accessToken }));
+      return reply.send(ok({ accessToken: result.accessToken, user: result.user }));
     },
 
     async requestReset(request: FastifyRequest, reply: FastifyReply) {

@@ -76,7 +76,7 @@ export function createAuthService(repo: AuthRepository) {
       const newAccessToken = signAccessToken(user.id);
       const newRefreshToken = signRefreshToken(user.id);
 
-      return { accessToken: newAccessToken, refreshToken: newRefreshToken };
+      return { accessToken: newAccessToken, refreshToken: newRefreshToken, user: sanitizeUser(user) };
     },
 
     async requestPasswordReset(input: RequestResetInput, baseUrl: string) {
