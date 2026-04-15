@@ -1,10 +1,10 @@
 "use client";
 
-import Image from "next/image";
+import { useRef } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { ArrowLeft, Download, Lock, Unlock, RotateCcw, Clock, Hash, HardDrive, Layers } from "lucide-react";
-import { useFiles, useLockFile, useUnlockFile, useDownloadFile } from "@/hooks/use-files";
+import { ArrowLeft, Download, Lock, Unlock, RotateCcw, Clock, Hash, HardDrive, Layers, ImagePlus } from "lucide-react";
+import { useFiles, useLockFile, useUnlockFile, useDownloadFile, useSetPreview } from "@/hooks/use-files";
 import { useVersions, useRestoreVersion, useFilePreview } from "@/hooks/use-versions";
 import { useProject } from "@/hooks/use-projects";
 import { useAuth } from "@/contexts/auth";
@@ -35,7 +35,7 @@ function PreviewPanel({ fileId }: { fileId: string }) {
 
   if (error) {
     return (
-      <div className="flex h-full min-h-48 items-center justify-center rounded-lg bg-muted text-5xl">
+      <div className="flex h-48 items-center justify-center rounded-lg bg-muted text-5xl">
         🎨
       </div>
     );
@@ -46,13 +46,14 @@ function PreviewPanel({ fileId }: { fileId: string }) {
   }
 
   return (
-    <div className="relative aspect-square w-full overflow-hidden rounded-lg border bg-muted/30">
-      <Image
+    <div className="flex aspect-square w-full items-center justify-center overflow-hidden rounded-lg border bg-muted/30">
+      {/* object-contain fits the image inside the frame without cropping.
+          image-rendering: pixelated keeps pixel art crisp at any scale. */}
+      <img
         src={blobUrl}
         alt="File preview"
-        fill
-        className="object-contain"
-        unoptimized
+        className="h-full w-full object-cover"
+        style={{ imageRendering: "pixelated" }}
       />
     </div>
   );
@@ -132,6 +133,7 @@ function VersionRow({
 export default function FileDetailPage() {
   const { id: projectId, fileId } = useParams<{ id: string; fileId: string }>();
   const { user } = useAuth();
+  const previewInputRef = useRef<HTMLInputElement>(null);
 
   const { data: project } = useProject(projectId);
   const { data: files, isLoading: filesLoading } = useFiles(projectId);
@@ -140,6 +142,7 @@ export default function FileDetailPage() {
   const lock = useLockFile(projectId);
   const unlock = useUnlockFile(projectId);
   const download = useDownloadFile();
+  const setPreview = useSetPreview(projectId);
 
   const file = files?.find((f) => f.id === fileId);
   const currentUserId = user?.id ?? "";
@@ -203,7 +206,31 @@ export default function FileDetailPage() {
       <div className="grid gap-6 lg:grid-cols-[1fr_2fr]">
         {/* Left: preview + metadata */}
         <div className="flex flex-col gap-4">
+          {/* Hidden input for preview image selection */}
+          <input
+            ref={previewInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/gif,image/webp"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) setPreview.mutate({ fileId, imageFile: f });
+              e.target.value = "";
+            }}
+          />
+
           <PreviewPanel fileId={fileId} />
+
+          <Button
+            variant="outline"
+            size="sm"
+            className="w-full"
+            onClick={() => previewInputRef.current?.click()}
+            disabled={setPreview.isPending}
+          >
+            <ImagePlus className="mr-1.5 h-4 w-4" />
+            {setPreview.isPending ? "Uploading…" : "Set Preview Image"}
+          </Button>
 
           {/* Metadata */}
           {file && (

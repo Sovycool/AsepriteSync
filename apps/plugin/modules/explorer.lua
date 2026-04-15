@@ -306,7 +306,7 @@ function Explorer:_downloadAndOpen(file)
     f:close()
 
     if self._sync then
-      self._sync:registerOpen(destPath, file.id, file.projectId)
+      self._sync:registerOpen(destPath, file.id, file.projectId, file.currentVersionId)
     end
 
     app.open(destPath)

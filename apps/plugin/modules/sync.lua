@@ -77,11 +77,14 @@ end
 -- ---------------------------------------------------------------------------
 
 -- Remember that filePath came from the server as fileId in projectId.
-function Sync:registerOpen(filePath, fileId, projectId)
+-- versionId is the currentVersionId at the time of download — used later to
+-- detect if the server has a newer version (conflict detection on push).
+function Sync:registerOpen(filePath, fileId, projectId, versionId)
   self._openFiles[filePath] = {
     fileId     = fileId,
     projectId  = projectId,
     lockedByMe = false,
+    versionId  = versionId,  -- may be nil for first-time uploads
   }
 end
 
@@ -146,6 +149,49 @@ function Sync:unlock(fileId, callback)
 end
 
 -- ---------------------------------------------------------------------------
+-- Pull (download latest version from server and overwrite local file)
+-- ---------------------------------------------------------------------------
+
+-- Download the latest binary for fileId and overwrite destPath.
+-- Updates the stored versionId on success.
+-- @param fileId    string
+-- @param destPath  string   path to overwrite (must be the registered filePath)
+-- @param callback  function(ok: boolean, err)
+function Sync:pull(fileId, destPath, callback)
+  self._api:downloadBinary('/files/' .. fileId, function(bytes, err)
+    if err then
+      if callback then callback(false, err) end
+      return
+    end
+
+    if not bytes or #bytes == 0 then
+      if callback then callback(false, { message = 'Received empty file from server.' }) end
+      return
+    end
+
+    local f, openErr = io.open(destPath, 'wb')
+    if not f then
+      if callback then callback(false, { message = 'Cannot write file: ' .. tostring(openErr) }) end
+      return
+    end
+    f:write(bytes)
+    f:close()
+
+    -- Fetch fresh metadata so we can update the stored versionId
+    self._api:get('/files/' .. fileId .. '/info', function(data, metaErr)
+      if not metaErr and data and data.currentVersionId then
+        for path, info in pairs(self._openFiles) do
+          if info.fileId == fileId then
+            self._openFiles[path].versionId = data.currentVersionId
+          end
+        end
+      end
+      if callback then callback(true, nil) end
+    end)
+  end)
+end
+
+-- ---------------------------------------------------------------------------
 -- Push (update existing file)
 -- ---------------------------------------------------------------------------
 
@@ -190,6 +236,14 @@ function Sync:push(callback)
       if err then
         callback(false, nil, err)
         return
+      end
+      -- Update the stored versionId so the next push detects conflicts correctly
+      if data and data.version and data.version.id then
+        for path, rec in pairs(self._openFiles) do
+          if rec.fileId == info.fileId then
+            self._openFiles[path].versionId = data.version.id
+          end
+        end
       end
       callback(true, data, nil)
     end
@@ -248,7 +302,8 @@ function Sync:uploadNew(projectId, callback)
         local spritePath = (sprite.filename and sprite.filename ~= '')
                            and sprite.filename
                            or  tempPath
-        self:registerOpen(spritePath, data.id, projectId)
+        local initialVersionId = data.version and data.version.id or nil
+        self:registerOpen(spritePath, data.id, projectId, initialVersionId)
       end
       callback(true, data, nil)
     end

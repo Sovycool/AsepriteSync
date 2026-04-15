@@ -164,6 +164,58 @@ local function cmd_push()
     if not warnDlg.data.push then return end
   end
 
+  -- ---- Conflict detection: server has a newer version ----
+  local hasConflict = serverFile
+                      and serverFile.currentVersionId ~= nil
+                      and serverFile.currentVersionId ~= json.null
+                      and info.versionId ~= nil
+                      and serverFile.currentVersionId ~= info.versionId
+
+  if hasConflict then
+    local conflictDlg = Dialog('AsepriteSync — Conflict detected')
+    conflictDlg:label{ label = 'The server has a newer version of this file.' }
+    conflictDlg:label{ label = 'Your local copy may be out of date.' }
+    conflictDlg:separator()
+    conflictDlg:button{ id = 'push',   text = 'Push anyway (overwrite)', focus = false }
+    conflictDlg:button{ id = 'pull',   text = 'Pull latest version',     focus = false }
+    conflictDlg:button{ id = 'cancel', text = 'Cancel',                  focus = true  }
+    conflictDlg:show{ wait = true }
+
+    if conflictDlg.data.pull then
+      -- Pull the latest version: warn about unsaved changes, then overwrite
+      if sprite.isModified then
+        local saveDlg = Dialog('AsepriteSync — Unsaved changes')
+        saveDlg:label{ label = 'You have unsaved changes that will be lost.' }
+        saveDlg:label{ label = 'Pull and discard local changes?' }
+        saveDlg:separator()
+        saveDlg:button{ id = 'yes',    text = 'Pull anyway', focus = false }
+        saveDlg:button{ id = 'cancel', text = 'Cancel',      focus = true  }
+        saveDlg:show{ wait = true }
+        if not saveDlg.data.yes then return end
+      end
+
+      local pullPath = sprite.filename
+      local pullProgress = Dialog{ title = 'AsepriteSync' }
+      pullProgress:label{ id = 'msg', label = 'Downloading latest version\xE2\x80\xA6' }
+      pullProgress:show{ wait = false }
+
+      sync:pull(info.fileId, pullPath, function(pullOk, pullErr)
+        pullProgress:close()
+        if not pullOk then
+          alert('AsepriteSync — Pull failed', fmt_err(pullErr))
+        else
+          app.open(pullPath)
+          alert('AsepriteSync', 'Pulled latest version successfully.')
+        end
+      end)
+      return
+
+    elseif not conflictDlg.data.push then
+      return
+    end
+    -- else: user chose "Push anyway" — fall through to the normal push flow
+  end
+
   -- Update local tracking to match the real server state
   local lockedByMe = serverFile and is_locked_by_me(serverFile)
   if lockedByMe then
@@ -289,6 +341,90 @@ local function cmd_upload_new()
 end
 
 -- ---------------------------------------------------------------------------
+-- Command: Pull latest version
+-- ---------------------------------------------------------------------------
+
+local function cmd_pull()
+  if not auth:isLoggedIn() then
+    alert('AsepriteSync', 'You are not logged in.\nRun "AsepriteSync: Login / Connect" first.')
+    return
+  end
+
+  local sprite = app.activeSprite
+  if not sprite then
+    alert('AsepriteSync', 'No sprite is currently open.')
+    return
+  end
+
+  local info = sync:getFileInfo(sprite.filename)
+  if not info then
+    alert(
+      'AsepriteSync — Not linked',
+      'This sprite is not linked to a server file.\n'
+      .. 'Use "AsepriteSync: Open File\xE2\x80\xA6" to open a server file first.'
+    )
+    return
+  end
+
+  -- Check the server version
+  local serverFile, fetchErr = nil, nil
+  sync:fetchFileState(info.fileId, function(f, e) serverFile = f; fetchErr = e end)
+
+  if fetchErr then
+    alert('AsepriteSync — Pull failed', 'Could not check server version:\n' .. fmt_err(fetchErr))
+    return
+  end
+
+  -- Determine whether there is actually a newer version
+  local serverVersionId = serverFile and serverFile.currentVersionId ~= json.null
+                          and serverFile.currentVersionId or nil
+  local alreadyLatest = serverVersionId ~= nil
+                        and info.versionId ~= nil
+                        and serverVersionId == info.versionId
+
+  if alreadyLatest then
+    alert('AsepriteSync', 'You already have the latest version.')
+    return
+  end
+
+  -- Warn about unsaved changes
+  if sprite.isModified then
+    local saveDlg = Dialog('AsepriteSync — Unsaved changes')
+    saveDlg:label{ label = 'You have unsaved changes that will be lost.' }
+    saveDlg:label{ label = 'Pull the latest version and discard them?' }
+    saveDlg:separator()
+    saveDlg:button{ id = 'yes',    text = 'Pull anyway', focus = false }
+    saveDlg:button{ id = 'cancel', text = 'Cancel',      focus = true  }
+    saveDlg:show{ wait = true }
+    if not saveDlg.data.yes then return end
+  else
+    local confirmDlg = Dialog('AsepriteSync — Pull latest version')
+    confirmDlg:label{ label = 'Download and overwrite with the latest server version?' }
+    confirmDlg:label{ label = sprite.filename:match('[^/\\]+$') or 'sprite' }
+    confirmDlg:separator()
+    confirmDlg:button{ id = 'yes',    text = 'Pull',   focus = true  }
+    confirmDlg:button{ id = 'cancel', text = 'Cancel', focus = false }
+    confirmDlg:show{ wait = true }
+    if not confirmDlg.data.yes then return end
+  end
+
+  local pullPath = sprite.filename
+  local progressDlg = Dialog{ title = 'AsepriteSync' }
+  progressDlg:label{ id = 'msg', label = 'Downloading latest version\xE2\x80\xA6' }
+  progressDlg:show{ wait = false }
+
+  sync:pull(info.fileId, pullPath, function(pullOk, pullErr)
+    progressDlg:close()
+    if not pullOk then
+      alert('AsepriteSync — Pull failed', fmt_err(pullErr))
+    else
+      app.open(pullPath)
+      alert('AsepriteSync', 'Pulled latest version successfully.')
+    end
+  end)
+end
+
+-- ---------------------------------------------------------------------------
 -- Command: Lock / Unlock current file
 -- ---------------------------------------------------------------------------
 
@@ -403,7 +539,7 @@ end
 
 function init(plugin)
 
-  print('[AsepriteSync] v1.0.2 — Initializing plugin…')
+  print('[AsepriteSync] v1.0.3 — Initializing plugin…')
 
   -- Initialise modules in dependency order
   storage  = Storage.new(plugin.preferences)
@@ -413,7 +549,7 @@ function init(plugin)
   explorer = Explorer.new(api, auth, plugin.path)
   explorer:setSync(sync)  -- inject after both are created (avoids circular dep)
 
-  print('[AsepriteSync] v1.0.2 — Plugin initialized.')
+  print('[AsepriteSync] v1.0.3 — Plugin initialized.')
 
   -- Create the "AsepriteSync" submenu inside File > Scripts
   plugin:newMenuGroup{
@@ -452,6 +588,13 @@ function init(plugin)
   }
 
   plugin:newCommand{
+    id      = 'asepritesync-pull',
+    title   = 'Pull Latest Version',
+    group   = 'asepritesync',
+    onclick = cmd_pull,
+  }
+
+  plugin:newCommand{
     id      = 'asepritesync-lock',
     title   = 'Lock / Unlock File',
     group   = 'asepritesync',
@@ -465,7 +608,7 @@ function init(plugin)
     onclick = cmd_settings,
   }
 
-  print('[AsepriteSync] v1.0.2 — Commands registered.')
+  print('[AsepriteSync] v1.0.3 — Commands registered.')
 
   -- Optionally verify the stored token in the background on startup
   if auth:isLoggedIn() then
