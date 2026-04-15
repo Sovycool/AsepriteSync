@@ -1,0 +1,424 @@
+-- AsepriteSync plugin — entry point
+--
+-- Loaded automatically by Aseprite when the extension is installed.
+-- Wires together Storage → Api → Auth and registers plugin commands.
+--
+-- Module dependencies are resolved relative to this directory via Lua's
+-- standard require() which Aseprite maps to the extension root.
+
+local Storage  = require('modules.storage')
+local Api      = require('modules.api')
+local Auth     = require('modules.auth')
+local Explorer = require('modules.explorer')
+local Sync     = require('modules.sync')
+
+-- Module-level references shared across commands registered in init().
+local storage  = nil
+local api      = nil
+local auth     = nil
+local explorer = nil
+local sync     = nil
+
+-- ---------------------------------------------------------------------------
+-- Helpers
+-- ---------------------------------------------------------------------------
+
+local function alert(title, message)
+  local dlg = Dialog(title)
+  dlg:label{ label = message }
+  dlg:separator()
+  dlg:button{ id = 'ok', text = 'OK', focus = true }
+  dlg:show{ wait = true }
+end
+
+local function fmt_err(err)
+  if type(err) == 'table' then
+    return err.message or err.code or 'Unknown error'
+  end
+  return tostring(err)
+end
+
+-- ---------------------------------------------------------------------------
+-- Command: Login / Connect
+-- ---------------------------------------------------------------------------
+
+local function cmd_login()
+  -- If already logged in, show current user and offer logout
+  if auth:isLoggedIn() then
+    local user = auth:getUser()
+    local dlg = Dialog('AsepriteSync — Connected')
+    dlg:label{ label = 'Logged in as:  ' .. (user and user.username or '?') }
+    dlg:label{ label = 'Server:  ' .. api:getBaseUrl() }
+    dlg:separator()
+    dlg:button{ id = 'logout', text = 'Logout', focus = false }
+    dlg:button{ id = 'cancel', text = 'Close',  focus = true  }
+    dlg:show{ wait = true }
+
+    if dlg.data.logout then
+      auth:logout(function()
+        alert('AsepriteSync', 'Logged out successfully.')
+      end)
+    end
+    return
+  end
+
+  -- ---- Login dialog ----
+  local saved = storage:load()
+
+  local dlg = Dialog('AsepriteSync — Login')
+  dlg:label{ label = 'Connect to your AsepriteSync server.' }
+  dlg:separator()
+  dlg:entry{ id = 'baseUrl',  label = 'Server URL:', text = saved.baseUrl }
+  dlg:entry{ id = 'email',    label = 'Email:',      text = saved.email or '' }
+  dlg:entry{ id = 'password', label = 'Password:',   text = '' }
+  dlg:separator()
+  dlg:button{ id = 'login',  text = 'Login',  focus = true  }
+  dlg:button{ id = 'cancel', text = 'Cancel', focus = false }
+  dlg:show{ wait = true }
+
+  if not dlg.data.login then return end
+
+  local baseUrl  = dlg.data.baseUrl  or saved.baseUrl
+  local email    = dlg.data.email    or ''
+  local password = dlg.data.password or ''
+
+  if email == '' or password == '' then
+    alert('AsepriteSync', 'Email and password are required.')
+    return
+  end
+
+  -- Persist the server URL immediately so it survives a failed login
+  storage:saveBaseUrl(baseUrl)
+  api:setBaseUrl(baseUrl)
+
+  -- HTTP request is async; the callback fires from Aseprite's event loop
+  auth:login(email, password, function(user, err)
+    if err then
+      alert('AsepriteSync — Login failed', fmt_err(err))
+      return
+    end
+    alert('AsepriteSync', 'Welcome, ' .. (user.username or user.email) .. '!')
+  end)
+end
+
+-- ---------------------------------------------------------------------------
+-- Command: File Explorer
+-- ---------------------------------------------------------------------------
+
+local function cmd_explorer()
+  explorer:open()
+end
+
+-- ---------------------------------------------------------------------------
+-- Command: Push Changes (upload current sprite as new version)
+-- ---------------------------------------------------------------------------
+
+local function cmd_push()
+  if not auth:isLoggedIn() then
+    alert('AsepriteSync', 'You are not logged in.\nRun "AsepriteSync: Login / Connect" first.')
+    return
+  end
+
+  local sprite = app.activeSprite
+  if not sprite then
+    alert('AsepriteSync', 'No sprite is currently open.')
+    return
+  end
+
+  -- Check if this sprite is registered with a server file
+  local info = sync:getFileInfo(sprite.filename)
+  if not info then
+    alert(
+      'AsepriteSync — Not linked',
+      'This sprite is not linked to a server file.\n'
+      .. 'Use "AsepriteSync: Upload New File" to push it for the first time.'
+    )
+    return
+  end
+
+  -- Confirm push
+  local confirmDlg = Dialog('AsepriteSync — Push Changes')
+  confirmDlg:label{ label = 'Upload current sprite as a new version?' }
+  confirmDlg:label{ label = sprite.filename:match('[^/\\]+$') or 'sprite' }
+  confirmDlg:separator()
+
+  local offerUnlock = info.lockedByMe
+  if offerUnlock then
+    confirmDlg:check{ id = 'unlock', label = 'Unlock after push', selected = true }
+  end
+
+  confirmDlg:button{ id = 'push',   text = 'Push',   focus = true  }
+  confirmDlg:button{ id = 'cancel', text = 'Cancel', focus = false }
+  confirmDlg:show{ wait = true }
+
+  if not confirmDlg.data.push then return end
+
+  local doUnlock = offerUnlock and confirmDlg.data.unlock
+
+  -- Show progress
+  local progressDlg = Dialog{ title = 'AsepriteSync' }
+  progressDlg:label{ id = 'msg', label = 'Uploading…' }
+  progressDlg:show{ wait = false }
+
+  sync:push(function(ok, _, err)
+    progressDlg:close()
+
+    if not ok then
+      alert('AsepriteSync — Push failed', fmt_err(err))
+      return
+    end
+
+    if doUnlock then
+      sync:unlock(info.fileId, function(unlockOk, unlockErr)
+        if not unlockOk then
+          alert('AsepriteSync', 'Pushed successfully, but unlock failed:\n' .. fmt_err(unlockErr))
+        else
+          alert('AsepriteSync', 'Pushed and unlocked successfully.')
+        end
+      end)
+    else
+      alert('AsepriteSync', 'Pushed successfully.')
+    end
+  end)
+end
+
+-- ---------------------------------------------------------------------------
+-- Command: Upload New File (first-time upload)
+-- ---------------------------------------------------------------------------
+
+local function cmd_upload_new()
+  if not auth:isLoggedIn() then
+    alert('AsepriteSync', 'You are not logged in.\nRun "AsepriteSync: Login / Connect" first.')
+    return
+  end
+
+  local sprite = app.activeSprite
+  if not sprite then
+    alert('AsepriteSync', 'No sprite is currently open.')
+    return
+  end
+
+  -- Mutable state for async project load
+  local state = { projects = {}, dlg = nil }
+
+  local dlg = Dialog{ title = 'AsepriteSync — Upload New File' }
+  state.dlg = dlg
+
+  dlg:label{ label = 'Upload to project:' }
+  dlg:combobox{
+    id      = 'project',
+    label   = 'Project:',
+    options = { '(loading…)' },
+  }
+  dlg:separator()
+  dlg:button{ id = 'upload', text = 'Upload', focus = true,  enabled = false }
+  dlg:button{ id = 'cancel', text = 'Cancel', focus = false }
+
+  -- Load projects asynchronously
+  api:get('/projects', function(data, err)
+    if err then
+      dlg:modify{ id = 'project', options = { '(error: ' .. fmt_err(err) .. ')' } }
+      return
+    end
+    state.projects = data or {}
+    if #state.projects == 0 then
+      dlg:modify{ id = 'project', options = { '(no projects)' } }
+      return
+    end
+    local names = {}
+    for _, p in ipairs(state.projects) do
+      names[#names + 1] = p.name .. '  [' .. (p.role or '?') .. ']'
+    end
+    dlg:modify{ id = 'project', options = names }
+    dlg:modify{ id = 'upload',  enabled = true }
+  end)
+
+  dlg:show{ wait = true }
+
+  if not dlg.data.upload then return end
+
+  local projectIdx = dlg.data.project
+  local project    = state.projects[projectIdx]
+  if not project then return end
+
+  local progressDlg = Dialog{ title = 'AsepriteSync' }
+  progressDlg:label{ id = 'msg', label = 'Uploading to ' .. project.name .. '…' }
+  progressDlg:show{ wait = false }
+
+  sync:uploadNew(project.id, function(ok, data, err)
+    progressDlg:close()
+    if not ok then
+      alert('AsepriteSync — Upload failed', fmt_err(err))
+      return
+    end
+    local name = data and data.name or '?'
+    alert('AsepriteSync', '"' .. name .. '" uploaded successfully to ' .. project.name .. '.')
+  end)
+end
+
+-- ---------------------------------------------------------------------------
+-- Command: Lock / Unlock current file
+-- ---------------------------------------------------------------------------
+
+local function cmd_lock_toggle()
+  if not auth:isLoggedIn() then
+    alert('AsepriteSync', 'You are not logged in.')
+    return
+  end
+
+  local sprite = app.activeSprite
+  if not sprite then
+    alert('AsepriteSync', 'No sprite is currently open.')
+    return
+  end
+
+  local info = sync:getFileInfo(sprite.filename)
+  if not info then
+    alert(
+      'AsepriteSync',
+      'This sprite is not linked to a server file.\nOpen a file via "AsepriteSync: Open File…" first.'
+    )
+    return
+  end
+
+  if info.lockedByMe then
+    -- Unlock
+    local dlg = Dialog('AsepriteSync — Unlock')
+    dlg:label{ label = 'Release lock on ' .. (sprite.filename:match('[^/\\]+$') or 'this file') .. '?' }
+    dlg:button{ id = 'yes',    text = 'Unlock', focus = true  }
+    dlg:button{ id = 'cancel', text = 'Cancel', focus = false }
+    dlg:show{ wait = true }
+    if not dlg.data.yes then return end
+
+    sync:unlock(info.fileId, function(ok, err)
+      if ok then
+        alert('AsepriteSync', 'File unlocked.')
+      else
+        alert('AsepriteSync — Unlock failed', fmt_err(err))
+      end
+    end)
+  else
+    -- Lock
+    local dlg = Dialog('AsepriteSync — Lock')
+    dlg:label{ label = 'Lock ' .. (sprite.filename:match('[^/\\]+$') or 'this file') .. ' for editing?' }
+    dlg:button{ id = 'yes',    text = 'Lock',   focus = true  }
+    dlg:button{ id = 'cancel', text = 'Cancel', focus = false }
+    dlg:show{ wait = true }
+    if not dlg.data.yes then return end
+
+    sync:lock(info.fileId, function(ok, err)
+      if ok then
+        alert('AsepriteSync', 'File locked.')
+      else
+        alert('AsepriteSync — Lock failed', fmt_err(err))
+      end
+    end)
+  end
+end
+
+-- ---------------------------------------------------------------------------
+-- Command: Server settings
+-- ---------------------------------------------------------------------------
+
+local function cmd_settings()
+  local saved = storage:load()
+
+  local dlg = Dialog('AsepriteSync — Settings')
+  dlg:entry{ id = 'baseUrl', label = 'Server URL:', text = saved.baseUrl }
+  dlg:separator()
+  dlg:button{ id = 'save',   text = 'Save',   focus = true  }
+  dlg:button{ id = 'cancel', text = 'Cancel', focus = false }
+  dlg:show{ wait = true }
+
+  if dlg.data.save then
+    local url = dlg.data.baseUrl or saved.baseUrl
+    storage:saveBaseUrl(url)
+    api:setBaseUrl(url)
+    alert('AsepriteSync', 'Server URL updated.')
+  end
+end
+
+-- ---------------------------------------------------------------------------
+-- Plugin lifecycle
+-- ---------------------------------------------------------------------------
+
+function init(plugin)
+  -- Initialise modules in dependency order
+  storage  = Storage.new(plugin.preferences)
+  api      = Api.new('http://localhost:4000')  -- base URL overwritten by Auth.new via storage
+  auth     = Auth.new(api, storage)
+  sync     = Sync.new(api, auth, plugin.dataPath)
+  explorer = Explorer.new(api, auth, plugin.dataPath)
+  explorer:setSync(sync)  -- inject after both are created (avoids circular dep)
+
+  -- Expose to other scripts
+  plugin._asepritesync = {
+    storage  = storage,
+    api      = api,
+    auth     = auth,
+    sync     = sync,
+    explorer = explorer,
+  }
+
+  -- Register commands
+  plugin:newCommand{
+    id      = 'asepritesync-login',
+    title   = 'AsepriteSync: Login / Connect',
+    group   = 'file_scripts',
+    onclick = cmd_login,
+  }
+
+  plugin:newCommand{
+    id      = 'asepritesync-explorer',
+    title   = 'AsepriteSync: Open File\xE2\x80\xA6',
+    group   = 'file_scripts',
+    onclick = cmd_explorer,
+  }
+
+  plugin:newCommand{
+    id      = 'asepritesync-push',
+    title   = 'AsepriteSync: Push Changes',
+    group   = 'file_scripts',
+    onclick = cmd_push,
+  }
+
+  plugin:newCommand{
+    id      = 'asepritesync-upload-new',
+    title   = 'AsepriteSync: Upload New File',
+    group   = 'file_scripts',
+    onclick = cmd_upload_new,
+  }
+
+  plugin:newCommand{
+    id      = 'asepritesync-lock',
+    title   = 'AsepriteSync: Lock / Unlock File',
+    group   = 'file_scripts',
+    onclick = cmd_lock_toggle,
+  }
+
+  plugin:newCommand{
+    id      = 'asepritesync-settings',
+    title   = 'AsepriteSync: Server Settings',
+    group   = 'file_scripts',
+    onclick = cmd_settings,
+  }
+
+  -- Optionally verify the stored token in the background on startup
+  if auth:isLoggedIn() then
+    auth:verifyToken(function(valid)
+      if not valid then
+        -- Token expired silently — user will be re-prompted next time they
+        -- try to use a feature that requires auth
+        print('[AsepriteSync] Stored token has expired. Please log in again.')
+      else
+        local user = auth:getUser()
+        print('[AsepriteSync] Session restored for ' .. (user and user.username or '?'))
+      end
+    end)
+  end
+end
+
+function exit(plugin)
+  -- Nothing to tear down; preferences are flushed automatically by Aseprite
+  plugin._asepritesync = nil
+end

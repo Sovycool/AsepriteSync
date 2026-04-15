@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { Readable } from "node:stream";
 import {
   ForbiddenError,
@@ -25,6 +25,14 @@ vi.mock("../../../lib/storage.js", () => ({
 vi.mock("../../../lib/activity.js", () => ({
   logActivity: vi.fn(),
 }));
+
+vi.mock("../../../lib/ws-server.js", () => ({
+  wsServer: {
+    broadcast: vi.fn(),
+    broadcastPresence: vi.fn(),
+  },
+}));
+
 
 const mockDb = {} as unknown as Database;
 
@@ -61,6 +69,15 @@ function makeVersion(overrides = {}) {
   };
 }
 
+function makeLockResult(overrides = {}) {
+  return {
+    id: "file-1",
+    lockedBy: "user-1",
+    lockExpiresAt: new Date(Date.now() + 30 * 60_000),
+    ...overrides,
+  };
+}
+
 function makeRepo(overrides: Partial<FilesRepository> = {}): FilesRepository {
   return {
     listProjectFiles: vi.fn().mockResolvedValue([]),
@@ -82,6 +99,12 @@ function makeRepo(overrides: Partial<FilesRepository> = {}): FilesRepository {
     updateCurrentVersion: vi.fn().mockResolvedValue(undefined),
     deleteFile: vi.fn().mockResolvedValue(undefined),
     findMemberRole: vi.fn().mockResolvedValue("owner"),
+    // T7
+    lockFile: vi.fn().mockImplementation(async (_fid, userId, expiresAt) =>
+      makeLockResult({ lockedBy: userId, lockExpiresAt: expiresAt }),
+    ),
+    unlockFile: vi.fn().mockResolvedValue(makeLockResult({ lockedBy: null, lockExpiresAt: null })),
+    clearExpiredLocks: vi.fn().mockResolvedValue([] as Array<{ fileId: string; projectId: string }>),
     // T6
     listVersionsPaginated: vi.fn().mockResolvedValue([makeVersion()]),
     findVersionByFileAndNumber: vi.fn().mockResolvedValue(makeVersion()),
@@ -289,6 +312,195 @@ describe("FilesService", () => {
       expect(result.isDuplicate).toBe(false);
       expect(result.version.versionNumber).toBe(2);
       expect(repo.createVersion).toHaveBeenCalledOnce();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  describe("lockFile (T7)", () => {
+    afterEach(() => { vi.useRealTimers(); });
+
+    it("throws ForbiddenError when viewer tries to lock", async () => {
+      const repo = makeRepo({
+        findFileWithRole: vi.fn().mockResolvedValue({ file: makeFile(), role: "viewer" }),
+      });
+      const service = createFilesService(repo, mockDb);
+
+      await expect(service.lockFile("file-1", "user-1")).rejects.toBeInstanceOf(ForbiddenError);
+    });
+
+    it("throws NotFoundError when file not found", async () => {
+      const repo = makeRepo({ findFileWithRole: vi.fn().mockResolvedValue(null) });
+      const service = createFilesService(repo, mockDb);
+
+      await expect(service.lockFile("file-x", "user-1")).rejects.toBeInstanceOf(NotFoundError);
+    });
+
+    it("throws ConflictError when file is locked by another user", async () => {
+      const repo = makeRepo({
+        findFileWithRole: vi.fn().mockResolvedValue({
+          file: makeFile({
+            lockedBy: "other-user",
+            lockExpiresAt: new Date(Date.now() + 60_000),
+          }),
+          role: "editor",
+        }),
+      });
+      const service = createFilesService(repo, mockDb);
+
+      const { ConflictError } = await import("../../../errors/index.js");
+      await expect(service.lockFile("file-1", "user-1")).rejects.toBeInstanceOf(ConflictError);
+    });
+
+    it("allows acquiring a lock when the previous lock has expired", async () => {
+      const repo = makeRepo({
+        findFileWithRole: vi.fn().mockResolvedValue({
+          file: makeFile({
+            lockedBy: "other-user",
+            lockExpiresAt: new Date(Date.now() - 1_000), // already expired
+          }),
+          role: "editor",
+        }),
+      });
+      const service = createFilesService(repo, mockDb);
+
+      const result = await service.lockFile("file-1", "user-1");
+      expect(result.lockedBy).toBe("user-1");
+      expect(repo.lockFile).toHaveBeenCalledOnce();
+    });
+
+    it("renews lock (heartbeat) when same user re-locks", async () => {
+      const repo = makeRepo({
+        findFileWithRole: vi.fn().mockResolvedValue({
+          file: makeFile({
+            lockedBy: "user-1",
+            lockExpiresAt: new Date(Date.now() + 5_000), // almost expired
+          }),
+          role: "editor",
+        }),
+      });
+      const service = createFilesService(repo, mockDb);
+
+      const result = await service.lockFile("file-1", "user-1");
+      expect(result.lockedBy).toBe("user-1");
+      expect(repo.lockFile).toHaveBeenCalledOnce();
+    });
+
+    it("acquires lock on an unlocked file", async () => {
+      const repo = makeRepo({
+        findFileWithRole: vi.fn().mockResolvedValue({ file: makeFile(), role: "editor" }),
+      });
+      const service = createFilesService(repo, mockDb);
+
+      const result = await service.lockFile("file-1", "user-1");
+      expect(result.lockedBy).toBe("user-1");
+      expect(result.lockExpiresAt).not.toBeNull();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  describe("unlockFile (T7)", () => {
+    it("throws NotFoundError when file not found", async () => {
+      const repo = makeRepo({ findFileWithRole: vi.fn().mockResolvedValue(null) });
+      const service = createFilesService(repo, mockDb);
+
+      await expect(service.unlockFile("file-x", "user-1")).rejects.toBeInstanceOf(NotFoundError);
+    });
+
+    it("returns successfully (idempotent) when file is not locked", async () => {
+      const repo = makeRepo({
+        findFileWithRole: vi.fn().mockResolvedValue({ file: makeFile(), role: "editor" }),
+      });
+      const service = createFilesService(repo, mockDb);
+
+      const result = await service.unlockFile("file-1", "user-1");
+      expect(result.lockedBy).toBeNull();
+      expect(repo.unlockFile).not.toHaveBeenCalled();
+    });
+
+    it("throws ForbiddenError when non-owner/non-lock-holder tries to unlock", async () => {
+      const repo = makeRepo({
+        findFileWithRole: vi.fn().mockResolvedValue({
+          file: makeFile({ lockedBy: "other-user", lockExpiresAt: new Date(Date.now() + 60_000) }),
+          role: "editor",
+        }),
+      });
+      const service = createFilesService(repo, mockDb);
+
+      await expect(service.unlockFile("file-1", "user-1")).rejects.toBeInstanceOf(ForbiddenError);
+    });
+
+    it("allows lock owner to unlock their own lock", async () => {
+      const repo = makeRepo({
+        findFileWithRole: vi.fn().mockResolvedValue({
+          file: makeFile({ lockedBy: "user-1", lockExpiresAt: new Date(Date.now() + 60_000) }),
+          role: "editor",
+        }),
+      });
+      const service = createFilesService(repo, mockDb);
+
+      const result = await service.unlockFile("file-1", "user-1");
+      expect(repo.unlockFile).toHaveBeenCalledWith("file-1");
+      expect(result.lockedBy).toBeNull();
+    });
+
+    it("allows project owner to unlock another user's lock", async () => {
+      const repo = makeRepo({
+        findFileWithRole: vi.fn().mockResolvedValue({
+          file: makeFile({ lockedBy: "other-user", lockExpiresAt: new Date(Date.now() + 60_000) }),
+          role: "owner",
+        }),
+      });
+      const service = createFilesService(repo, mockDb);
+
+      const result = await service.unlockFile("file-1", "user-1");
+      expect(repo.unlockFile).toHaveBeenCalledWith("file-1");
+      expect(result.lockedBy).toBeNull();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  describe("getPreviewStream (T13)", () => {
+    it("throws NotFoundError when file is not found", async () => {
+      const repo = makeRepo({ findFileWithRole: vi.fn().mockResolvedValue(null) });
+      const service = createFilesService(repo, mockDb);
+
+      await expect(service.getPreviewStream("file-x", "user-1")).rejects.toBeInstanceOf(NotFoundError);
+    });
+
+    it("throws NotFoundError when file has no currentVersionId", async () => {
+      const repo = makeRepo({
+        findFileWithRole: vi.fn().mockResolvedValue({
+          file: makeFile({ currentVersionId: null }),
+          role: "viewer",
+        }),
+      });
+      const service = createFilesService(repo, mockDb);
+
+      await expect(service.getPreviewStream("file-1", "user-1")).rejects.toBeInstanceOf(NotFoundError);
+    });
+
+    it("throws NotFoundError when version has no previewPath", async () => {
+      const repo = makeRepo({
+        findVersionById: vi.fn().mockResolvedValue(makeVersion({ previewPath: null })),
+      });
+      const service = createFilesService(repo, mockDb);
+
+      await expect(service.getPreviewStream("file-1", "user-1")).rejects.toBeInstanceOf(NotFoundError);
+    });
+
+    it("returns a readable stream when previewPath exists", async () => {
+      const { storage } = await import("../../../lib/storage.js");
+      const repo = makeRepo({
+        findVersionById: vi.fn().mockResolvedValue(
+          makeVersion({ previewPath: "proj-1/file-1/preview.png" }),
+        ),
+      });
+      const service = createFilesService(repo, mockDb);
+
+      const result = await service.getPreviewStream("file-1", "user-1");
+
+      expect(storage.readStream).toHaveBeenCalledWith("proj-1/file-1/preview.png");
+      expect(result.stream).toBeDefined();
     });
   });
 

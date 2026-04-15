@@ -1,4 +1,4 @@
-import { eq, desc, lt, and, inArray, asc, notInArray, count } from "drizzle-orm";
+import { eq, desc, lt, lte, and, inArray, asc, notInArray, count, isNotNull } from "drizzle-orm";
 import type { Database } from "@asepritesync/db";
 import { files, fileVersions, projectMembers } from "@asepritesync/db";
 import type { UserRole } from "@asepritesync/shared";
@@ -217,6 +217,42 @@ export function createFilesRepository(db: Database) {
         .update(fileVersions)
         .set({ previewPath })
         .where(eq(fileVersions.id, versionId));
+    },
+
+    // ------------------------------------------------------------------
+    // Locking (T7)
+    // ------------------------------------------------------------------
+
+    async lockFile(fileId: string, userId: string, expiresAt: Date) {
+      const [updated] = await db
+        .update(files)
+        .set({ lockedBy: userId, lockExpiresAt: expiresAt, updatedAt: new Date() })
+        .where(eq(files.id, fileId))
+        .returning();
+      return updated ?? null;
+    },
+
+    async unlockFile(fileId: string) {
+      const [updated] = await db
+        .update(files)
+        .set({ lockedBy: null, lockExpiresAt: null, updatedAt: new Date() })
+        .where(eq(files.id, fileId))
+        .returning();
+      return updated ?? null;
+    },
+
+    /**
+     * Atomically clears all locks whose expiry is <= now.
+     * Returns the fileId and projectId for each cleared lock (for WS broadcasting).
+     */
+    async clearExpiredLocks(): Promise<Array<{ fileId: string; projectId: string }>> {
+      const now = new Date();
+      const rows = await db
+        .update(files)
+        .set({ lockedBy: null, lockExpiresAt: null, updatedAt: now })
+        .where(and(isNotNull(files.lockExpiresAt), lte(files.lockExpiresAt, now)))
+        .returning({ fileId: files.id, projectId: files.projectId });
+      return rows;
     },
 
     // ------------------------------------------------------------------

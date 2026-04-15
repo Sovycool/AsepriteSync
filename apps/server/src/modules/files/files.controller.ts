@@ -126,6 +126,16 @@ export function createFilesController(service: FilesService) {
       return reply.status(status).send(ok(result));
     },
 
+    async getPreview(request: FastifyRequest, reply: FastifyReply) {
+      if (!request.userId) throw new UnauthorizedError();
+      const { id: fileId } = request.params as { id: string };
+
+      const { stream } = await service.getPreviewStream(fileId, request.userId);
+
+      void reply.headers({ "Content-Type": "image/png", "Cache-Control": "private, max-age=60" });
+      return reply.send(stream);
+    },
+
     async listVersions(request: FastifyRequest, reply: FastifyReply) {
       if (!request.userId) throw new UnauthorizedError();
       const { id: fileId } = request.params as { id: string };
@@ -144,6 +154,26 @@ export function createFilesController(service: FilesService) {
 
       const result = await service.listVersions(fileId, request.userId, query);
       return reply.send(ok(result.versions, result.meta));
+    },
+
+    // ------------------------------------------------------------------
+    // T7 — locking handlers
+    // ------------------------------------------------------------------
+
+    async lockFile(request: FastifyRequest, reply: FastifyReply) {
+      if (!request.userId) throw new UnauthorizedError();
+      const { id: fileId } = request.params as { id: string };
+
+      const result = await service.lockFile(fileId, request.userId);
+      return reply.status(200).send(ok(result));
+    },
+
+    async unlockFile(request: FastifyRequest, reply: FastifyReply) {
+      if (!request.userId) throw new UnauthorizedError();
+      const { id: fileId } = request.params as { id: string };
+
+      const result = await service.unlockFile(fileId, request.userId);
+      return reply.status(200).send(ok(result));
     },
 
     async restoreVersion(request: FastifyRequest, reply: FastifyReply) {

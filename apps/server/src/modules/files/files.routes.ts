@@ -27,4 +27,11 @@ export async function fileRoutes(app: FastifyInstance, options: { db: Database }
   // Version history & restore
   app.get("/files/:id/versions", (req, reply) => ctrl.listVersions(req, reply));
   app.post("/files/:id/versions/:v/restore", (req, reply) => ctrl.restoreVersion(req, reply));
+
+  // Preview thumbnail (T13)
+  app.get("/files/:id/preview", (req, reply) => ctrl.getPreview(req, reply));
+
+  // Locking (T7)
+  app.post("/files/:id/lock", (req, reply) => ctrl.lockFile(req, reply));
+  app.delete("/files/:id/lock", (req, reply) => ctrl.unlockFile(req, reply));
 }

@@ -17,6 +17,7 @@ const envSchema = z.object({
   S3_ACCESS_KEY: z.string().optional(),
   S3_SECRET_KEY: z.string().optional(),
   LOCK_DURATION_MINUTES: z.coerce.number().default(30),
+  ASEPRITE_CLI: z.string().optional(),
   PORT: z.coerce.number().default(4000),
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   SMTP_HOST: z.string().default("localhost"),

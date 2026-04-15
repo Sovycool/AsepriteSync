@@ -4,5 +4,45 @@
   "version": "0.1.0",
   "description": "Synchronize and collaborate on Aseprite files via AsepriteSync server",
   "author": "Helios",
-  "license": "MIT"
+  "license": "MIT",
+  "contributes": {
+    "scripts": [
+      {
+        "id": "asepritesync-login",
+        "title": "AsepriteSync: Login / Connect",
+        "group": "file_scripts",
+        "path": "plugin.lua"
+      },
+      {
+        "id": "asepritesync-explorer",
+        "title": "AsepriteSync: Open File\u2026",
+        "group": "file_scripts",
+        "path": "plugin.lua"
+      },
+      {
+        "id": "asepritesync-push",
+        "title": "AsepriteSync: Push Changes",
+        "group": "file_scripts",
+        "path": "plugin.lua"
+      },
+      {
+        "id": "asepritesync-upload-new",
+        "title": "AsepriteSync: Upload New File",
+        "group": "file_scripts",
+        "path": "plugin.lua"
+      },
+      {
+        "id": "asepritesync-lock",
+        "title": "AsepriteSync: Lock / Unlock File",
+        "group": "file_scripts",
+        "path": "plugin.lua"
+      },
+      {
+        "id": "asepritesync-settings",
+        "title": "AsepriteSync: Server Settings",
+        "group": "file_scripts",
+        "path": "plugin.lua"
+      }
+    ]
+  }
 }

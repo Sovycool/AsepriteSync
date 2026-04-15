@@ -1,16 +1,23 @@
 import crypto from "node:crypto";
 import path from "node:path";
 import type { Readable } from "node:stream";
+import { eq } from "drizzle-orm";
 import type { Database } from "@asepritesync/db";
+import { users } from "@asepritesync/db";
 import {
+  ConflictError,
   ForbiddenError,
   LockedError,
   NotFoundError,
   ValidationError,
 } from "../../errors/index.js";
+import { config } from "../../config.js";
 import { logActivity } from "../../lib/activity.js";
 import { encodeCursor, paginate } from "../../lib/pagination.js";
+import { readAsepriteMetadata } from "../../lib/aseprite-parser.js";
 import { storage } from "../../lib/storage.js";
+import { wsServer } from "../../lib/ws-server.js";
+import { enqueuePreviewJob } from "../../jobs/preview-job.js";
 import type { FilesRepository } from "./files.repository.js";
 import { ALLOWED_EXTENSIONS } from "./files.schema.js";
 import type { ListFilesQuery, BatchDownloadInput } from "./files.schema.js";
@@ -68,6 +75,10 @@ export function createFilesService(repo: FilesRepository, db: Database) {
       // Save to disk (computes SHA-256 + size in one pass)
       const { hash, sizeBytes } = await storage.save(storagePath, upload.file);
 
+      // Extract Aseprite metadata from the stored file header (non-blocking read)
+      const absStoragePath = path.join(config.STORAGE_PATH, storagePath);
+      const metadata = await readAsepriteMetadata(absStoragePath);
+
       // Insert file record (currentVersionId set after version insert)
       const file = await repo.createFile({
         id: fileId,
@@ -99,9 +110,23 @@ export function createFilesService(repo: FilesRepository, db: Database) {
         metadata: { name: upload.filename, sizeBytes, versionId },
       });
 
+      // WebSocket broadcast — fire-and-forget
+      void getUsernameById(db, requesterId).then((username) => {
+        wsServer.broadcast(projectId, "file:uploaded", {
+          fileId,
+          name: upload.filename,
+          userId: requesterId,
+          username,
+        });
+      });
+
+      // Background preview generation
+      enqueuePreviewJob({ db, repo, projectId, fileId, versionId, storagePath });
+
       return {
         ...serializeFile({ ...file, currentVersionId: versionId }),
         version: serializeVersion(version),
+        ...(metadata !== null && { metadata }),
       };
     },
 
@@ -126,6 +151,24 @@ export function createFilesService(repo: FilesRepository, db: Database) {
         sizeBytes: version.sizeBytes,
         stream: storage.readStream(version.storagePath),
       };
+    },
+
+    // ------------------------------------------------------------------
+    // Preview thumbnail — GET /files/:id/preview  (T13)
+    // ------------------------------------------------------------------
+
+    async getPreviewStream(fileId: string, requesterId: string) {
+      const result = await repo.findFileWithRole(fileId, requesterId);
+      if (result === null) throw new NotFoundError("File", fileId);
+
+      const { file } = result;
+      if (file.currentVersionId === null) throw new NotFoundError("File has no versions");
+
+      const version = await repo.findVersionById(file.currentVersionId);
+      if (version === null) throw new NotFoundError("FileVersion", file.currentVersionId);
+      if (version.previewPath === null) throw new NotFoundError("Preview not yet generated");
+
+      return { stream: storage.readStream(version.previewPath) };
     },
 
     // ------------------------------------------------------------------
@@ -161,6 +204,8 @@ export function createFilesService(repo: FilesRepository, db: Database) {
         targetId: fileId,
         metadata: { name: result.file.name },
       });
+
+      wsServer.broadcast(result.file.projectId, "file:deleted", { fileId });
     },
 
     // ------------------------------------------------------------------
@@ -286,7 +331,35 @@ export function createFilesService(repo: FilesRepository, db: Database) {
         metadata: { versionNumber: newVersionNumber, sizeBytes },
       });
 
-      return { file: serializeFile({ ...file, currentVersionId: newVersionId }), version: serializeVersion(version), isDuplicate: false };
+      void getUsernameById(db, requesterId).then((username) => {
+        wsServer.broadcast(file.projectId, "file:updated", {
+          fileId,
+          version: newVersionNumber,
+          userId: requesterId,
+          username,
+        });
+      });
+
+      // Background preview generation
+      enqueuePreviewJob({
+        db,
+        repo,
+        projectId: file.projectId,
+        fileId,
+        versionId: newVersionId,
+        storagePath,
+      });
+
+      // Extract metadata from the new version
+      const absStoragePath = path.join(config.STORAGE_PATH, storagePath);
+      const metadata = await readAsepriteMetadata(absStoragePath);
+
+      return {
+        file: serializeFile({ ...file, currentVersionId: newVersionId }),
+        version: serializeVersion(version),
+        isDuplicate: false,
+        ...(metadata !== null && { metadata }),
+      };
     },
 
     // ------------------------------------------------------------------
@@ -353,6 +426,101 @@ export function createFilesService(repo: FilesRepository, db: Database) {
 
       return serializeVersion(newVersion);
     },
+
+    // ------------------------------------------------------------------
+    // Lock file — POST /files/:id/lock  (T7)
+    // ------------------------------------------------------------------
+
+    async lockFile(fileId: string, requesterId: string) {
+      const result = await repo.findFileWithRole(fileId, requesterId);
+      if (result === null) throw new NotFoundError("File", fileId);
+
+      const { file, role } = result;
+      if (role === "viewer") throw new ForbiddenError("Viewers cannot lock files");
+
+      const now = new Date();
+      const expiresAt = new Date(now.getTime() + config.LOCK_DURATION_MINUTES * 60_000);
+
+      // Heartbeat: same user already holds the lock → renew it
+      if (file.lockedBy === requesterId) {
+        const updated = await repo.lockFile(fileId, requesterId, expiresAt);
+        if (!updated) throw new NotFoundError("File", fileId);
+        return serializeLock(updated);
+      }
+
+      // Conflict: another user holds an unexpired lock
+      if (
+        file.lockedBy !== null &&
+        file.lockExpiresAt !== null &&
+        file.lockExpiresAt > now
+      ) {
+        throw new ConflictError("File is already locked by another user", {
+          lockedBy: file.lockedBy,
+          lockExpiresAt: file.lockExpiresAt.toISOString(),
+        });
+      }
+
+      // Lock is free (or expired) — acquire it
+      const updated = await repo.lockFile(fileId, requesterId, expiresAt);
+      if (!updated) throw new NotFoundError("File", fileId);
+
+      logActivity(db, {
+        userId: requesterId,
+        projectId: file.projectId,
+        action: "file:locked",
+        targetType: "file",
+        targetId: fileId,
+        metadata: { lockedBy: requesterId, lockExpiresAt: expiresAt.toISOString() },
+      });
+
+      void getUsernameById(db, requesterId).then((username) => {
+        wsServer.broadcast(file.projectId, "file:locked", {
+          fileId,
+          userId: requesterId,
+          username,
+          expiresAt: expiresAt.toISOString(),
+        });
+      });
+
+      return serializeLock(updated);
+    },
+
+    // ------------------------------------------------------------------
+    // Unlock file — DELETE /files/:id/lock  (T7)
+    // ------------------------------------------------------------------
+
+    async unlockFile(fileId: string, requesterId: string) {
+      const result = await repo.findFileWithRole(fileId, requesterId);
+      if (result === null) throw new NotFoundError("File", fileId);
+
+      const { file, role } = result;
+
+      // Not locked → idempotent success
+      if (file.lockedBy === null) {
+        return serializeLock(file);
+      }
+
+      // Only lock owner or project owner may unlock
+      if (file.lockedBy !== requesterId && role !== "owner") {
+        throw new ForbiddenError("Only the lock owner or project owner can unlock this file");
+      }
+
+      const updated = await repo.unlockFile(fileId);
+      if (!updated) throw new NotFoundError("File", fileId);
+
+      logActivity(db, {
+        userId: requesterId,
+        projectId: file.projectId,
+        action: "file:unlocked",
+        targetType: "file",
+        targetId: fileId,
+        metadata: { unlockedBy: requesterId },
+      });
+
+      wsServer.broadcast(file.projectId, "file:unlocked", { fileId });
+
+      return serializeLock(updated);
+    },
   };
 }
 
@@ -361,6 +529,32 @@ export type FilesService = ReturnType<typeof createFilesService>;
 // ---------------------------------------------------------------------------
 // Serializers
 // ---------------------------------------------------------------------------
+
+/** Fetches a user's username for WS event payloads. Falls back to "unknown" on any failure. */
+async function getUsernameById(db: Database, userId: string): Promise<string> {
+  try {
+    const [user] = await db
+      .select({ username: users.username })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+    return user?.username ?? "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
+function serializeLock(f: {
+  id: string;
+  lockedBy: string | null;
+  lockExpiresAt: Date | null;
+}) {
+  return {
+    fileId: f.id,
+    lockedBy: f.lockedBy,
+    lockExpiresAt: f.lockExpiresAt?.toISOString() ?? null,
+  };
+}
 
 function serializeFile(f: {
   id: string;
@@ -394,6 +588,8 @@ function serializeVersion(v: {
   hashSha256: string;
   sizeBytes: number;
   storagePath: string;
+  previewPath: string | null;
+  isPinned: boolean;
   createdAt: Date;
 }) {
   return {
@@ -403,6 +599,8 @@ function serializeVersion(v: {
     authorId: v.authorId,
     hashSha256: v.hashSha256,
     sizeBytes: v.sizeBytes,
+    previewPath: v.previewPath,
+    isPinned: v.isPinned,
     createdAt: v.createdAt.toISOString(),
   };
 }
