@@ -28,6 +28,9 @@ export async function fileRoutes(app: FastifyInstance, options: { db: Database }
   app.get("/files/:id/versions", (req, reply) => ctrl.listVersions(req, reply));
   app.post("/files/:id/versions/:v/restore", (req, reply) => ctrl.restoreVersion(req, reply));
 
+  // File metadata (lock state, version pointer, etc.)
+  app.get("/files/:id/info", (req, reply) => ctrl.getFileMeta(req, reply));
+
   // Preview thumbnail (T13)
   app.get("/files/:id/preview", (req, reply) => ctrl.getPreview(req, reply));
   app.post("/files/:id/preview", (req, reply) => ctrl.setPreview(req, reply));

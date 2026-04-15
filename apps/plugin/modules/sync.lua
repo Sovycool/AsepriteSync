@@ -100,6 +100,20 @@ function Sync:setLockedByMe(fileId, locked)
 end
 
 -- ---------------------------------------------------------------------------
+-- Real-time lock state from the server
+-- ---------------------------------------------------------------------------
+
+-- Fetch the current file record from the server and call
+-- callback(fileRecord, err).  fileRecord.lockedBy is the real value from the
+-- DB (nil/json.null when free, a user-ID string when held).
+function Sync:fetchFileState(fileId, callback)
+  self._api:get('/files/' .. fileId .. '/info', function(data, err)
+    if err then callback(nil, err); return end
+    callback(data, nil)
+  end)
+end
+
+-- ---------------------------------------------------------------------------
 -- Lock / Unlock
 -- ---------------------------------------------------------------------------
 

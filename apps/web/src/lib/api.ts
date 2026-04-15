@@ -347,6 +347,10 @@ export const filesApi = {
     return URL.createObjectURL(blob);
   },
 
+  getMeta(token: string, fileId: string): Promise<FileRecord> {
+    return authedRequest<FileRecord>(`/files/${fileId}/info`, token);
+  },
+
   setPreview(token: string, fileId: string, imageFile: File): Promise<{ fileId: string; previewPath: string }> {
     const fd = new FormData();
     fd.append("file", imageFile, imageFile.name);

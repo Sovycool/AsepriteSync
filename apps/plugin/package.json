@@ -1,7 +1,7 @@
 {
   "name": "asepritesync-plugin",
   "displayName": "AsepriteSync",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Synchronize and collaborate on Aseprite files via AsepriteSync server",
   "author": "Helios",
   "license": "MIT",

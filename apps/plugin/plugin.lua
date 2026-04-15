@@ -125,7 +125,6 @@ local function cmd_push()
     return
   end
 
-  -- Check if this sprite is registered with a server file
   local info = sync:getFileInfo(sprite.filename)
   if not info then
     alert(
@@ -136,14 +135,48 @@ local function cmd_push()
     return
   end
 
+  -- ---- Check real lock state from the server ----
+  local myId = auth:getUser() and auth:getUser().id or nil
+  local serverFile, fetchErr = nil, nil
+  sync:fetchFileState(info.fileId, function(f, e) serverFile = f; fetchErr = e end)
+
+  if fetchErr then
+    alert('AsepriteSync — Push failed', 'Could not check lock state:\n' .. fmt_err(fetchErr))
+    return
+  end
+
+  local json = require('modules.json')
+  local function is_locked_by_other(f)
+    return f.lockedBy ~= nil and f.lockedBy ~= json.null and f.lockedBy ~= myId
+  end
+  local function is_locked_by_me(f)
+    return f.lockedBy ~= nil and f.lockedBy ~= json.null and f.lockedBy == myId
+  end
+
+  if serverFile and is_locked_by_other(serverFile) then
+    local warnDlg = Dialog('AsepriteSync — File is locked')
+    warnDlg:label{ label = 'This file is currently locked by another user.' }
+    warnDlg:label{ label = 'Pushing may be rejected by the server.' }
+    warnDlg:separator()
+    warnDlg:button{ id = 'push',   text = 'Push anyway', focus = false }
+    warnDlg:button{ id = 'cancel', text = 'Cancel',      focus = true  }
+    warnDlg:show{ wait = true }
+    if not warnDlg.data.push then return end
+  end
+
+  -- Update local tracking to match the real server state
+  local lockedByMe = serverFile and is_locked_by_me(serverFile)
+  if lockedByMe then
+    sync:setLockedByMe(info.fileId, true)
+  end
+
   -- Confirm push
   local confirmDlg = Dialog('AsepriteSync — Push Changes')
   confirmDlg:label{ label = 'Upload current sprite as a new version?' }
   confirmDlg:label{ label = sprite.filename:match('[^/\\]+$') or 'sprite' }
   confirmDlg:separator()
 
-  local offerUnlock = info.lockedByMe
-  if offerUnlock then
+  if lockedByMe then
     confirmDlg:check{ id = 'unlock', label = 'Unlock after push', selected = true }
   end
 
@@ -153,18 +186,17 @@ local function cmd_push()
 
   if not confirmDlg.data.push then return end
 
-  local doUnlock = offerUnlock and confirmDlg.data.unlock
+  local doUnlock = lockedByMe and confirmDlg.data.unlock
 
-  -- Show progress
   local progressDlg = Dialog{ title = 'AsepriteSync' }
-  progressDlg:label{ id = 'msg', label = 'Uploading…' }
+  progressDlg:label{ id = 'msg', label = 'Uploading\xE2\x80\xA6' }
   progressDlg:show{ wait = false }
 
-  sync:push(function(ok, _, err)
+  sync:push(function(pushOk, _, pushErr)
     progressDlg:close()
 
-    if not ok then
-      alert('AsepriteSync — Push failed', fmt_err(err))
+    if not pushOk then
+      alert('AsepriteSync — Push failed', fmt_err(pushErr))
       return
     end
 
@@ -276,43 +308,71 @@ local function cmd_lock_toggle()
   if not info then
     alert(
       'AsepriteSync',
-      'This sprite is not linked to a server file.\nOpen a file via "AsepriteSync: Open File…" first.'
+      'This sprite is not linked to a server file.\nOpen a file via "AsepriteSync: Open File\xE2\x80\xA6" first.'
     )
     return
   end
 
-  if info.lockedByMe then
-    -- Unlock
-    local dlg = Dialog('AsepriteSync — Unlock')
-    dlg:label{ label = 'Release lock on ' .. (sprite.filename:match('[^/\\]+$') or 'this file') .. '?' }
-    dlg:button{ id = 'yes',    text = 'Unlock', focus = true  }
-    dlg:button{ id = 'cancel', text = 'Cancel', focus = false }
-    dlg:show{ wait = true }
-    if not dlg.data.yes then return end
+  -- ---- Fetch real lock state from the server before showing any dialog ----
+  local serverFile, fetchErr = nil, nil
+  sync:fetchFileState(info.fileId, function(f, e) serverFile = f; fetchErr = e end)
 
-    sync:unlock(info.fileId, function(ok, err)
-      if ok then
-        alert('AsepriteSync', 'File unlocked.')
-      else
-        alert('AsepriteSync — Unlock failed', fmt_err(err))
-      end
-    end)
-  else
-    -- Lock
+  if fetchErr then
+    alert('AsepriteSync — Error', 'Could not check lock state:\n' .. fmt_err(fetchErr))
+    return
+  end
+
+  local json = require('modules.json')
+  local myId = auth:getUser() and auth:getUser().id or nil
+  local fname = sprite.filename:match('[^/\\]+$') or 'this file'
+
+  local realLockedBy = (serverFile and serverFile.lockedBy ~= nil and serverFile.lockedBy ~= json.null)
+                       and serverFile.lockedBy or nil
+
+  -- Sync local tracking with the real server state
+  sync:setLockedByMe(info.fileId, realLockedBy == myId)
+
+  if realLockedBy == nil then
+    -- File is free — offer to lock
     local dlg = Dialog('AsepriteSync — Lock')
-    dlg:label{ label = 'Lock ' .. (sprite.filename:match('[^/\\]+$') or 'this file') .. ' for editing?' }
+    dlg:label{ label = 'Lock "' .. fname .. '" for editing?' }
     dlg:button{ id = 'yes',    text = 'Lock',   focus = true  }
     dlg:button{ id = 'cancel', text = 'Cancel', focus = false }
     dlg:show{ wait = true }
     if not dlg.data.yes then return end
 
-    sync:lock(info.fileId, function(ok, err)
-      if ok then
-        alert('AsepriteSync', 'File locked.')
+    sync:lock(info.fileId, function(lockOk, lockErr)
+      if lockOk then
+        alert('AsepriteSync', '"' .. fname .. '" is now locked by you.')
       else
-        alert('AsepriteSync — Lock failed', fmt_err(err))
+        alert('AsepriteSync — Lock failed', fmt_err(lockErr))
       end
     end)
+
+  elseif realLockedBy == myId then
+    -- Locked by me — offer to unlock
+    local dlg = Dialog('AsepriteSync — Unlock')
+    dlg:label{ label = 'Release your lock on "' .. fname .. '"?' }
+    dlg:button{ id = 'yes',    text = 'Unlock', focus = true  }
+    dlg:button{ id = 'cancel', text = 'Cancel', focus = false }
+    dlg:show{ wait = true }
+    if not dlg.data.yes then return end
+
+    sync:unlock(info.fileId, function(unlockOk, unlockErr)
+      if unlockOk then
+        alert('AsepriteSync', '"' .. fname .. '" has been unlocked.')
+      else
+        alert('AsepriteSync — Unlock failed', fmt_err(unlockErr))
+      end
+    end)
+
+  else
+    -- Locked by someone else — inform, no action available
+    alert(
+      'AsepriteSync — File is locked',
+      '"' .. fname .. '" is currently locked by another user.\n'
+      .. 'You cannot lock or unlock it until they release it.'
+    )
   end
 end
 
@@ -344,7 +404,7 @@ end
 
 function init(plugin)
 
-  print('[AsepriteSync] v1.0.0 — Initializing plugin…')
+  print('[AsepriteSync] v1.0.2 — Initializing plugin…')
 
   -- Initialise modules in dependency order
   storage  = Storage.new(plugin.preferences)
@@ -354,7 +414,7 @@ function init(plugin)
   explorer = Explorer.new(api, auth, plugin.path)
   explorer:setSync(sync)  -- inject after both are created (avoids circular dep)
 
-  print('[AsepriteSync] v1.0.0 — Plugin initialized.')
+  print('[AsepriteSync] v1.0.2 — Plugin initialized.')
 
   -- Create the "AsepriteSync" submenu inside File > Scripts
   plugin:newMenuGroup{
@@ -406,7 +466,7 @@ function init(plugin)
     onclick = cmd_settings,
   }
 
-  print('[AsepriteSync] v1.0.0 — Commands registered.')
+  print('[AsepriteSync] v1.0.2 — Commands registered.')
 
   -- Optionally verify the stored token in the background on startup
   if auth:isLoggedIn() then

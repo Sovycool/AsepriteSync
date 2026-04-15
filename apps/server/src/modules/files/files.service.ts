@@ -154,6 +154,16 @@ export function createFilesService(repo: FilesRepository, db: Database) {
     },
 
     // ------------------------------------------------------------------
+    // File metadata — GET /files/:id/info
+    // ------------------------------------------------------------------
+
+    async getFileMeta(fileId: string, requesterId: string) {
+      const result = await repo.findFileWithRole(fileId, requesterId);
+      if (result === null) throw new NotFoundError("File", fileId);
+      return serializeFile(result.file);
+    },
+
+    // ------------------------------------------------------------------
     // Preview thumbnail — GET /files/:id/preview  (T13)
     // ------------------------------------------------------------------
 

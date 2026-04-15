@@ -126,6 +126,13 @@ export function createFilesController(service: FilesService) {
       return reply.status(status).send(ok(result));
     },
 
+    async getFileMeta(request: FastifyRequest, reply: FastifyReply) {
+      if (!request.userId) throw new UnauthorizedError();
+      const { id: fileId } = request.params as { id: string };
+      const file = await service.getFileMeta(fileId, request.userId);
+      return reply.send(ok(file));
+    },
+
     async getPreview(request: FastifyRequest, reply: FastifyReply) {
       if (!request.userId) throw new UnauthorizedError();
       const { id: fileId } = request.params as { id: string };
