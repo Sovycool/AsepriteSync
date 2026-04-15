@@ -136,6 +136,21 @@ export function createFilesController(service: FilesService) {
       return reply.send(stream);
     },
 
+    async setPreview(request: FastifyRequest, reply: FastifyReply) {
+      if (!request.userId) throw new UnauthorizedError();
+      const { id: fileId } = request.params as { id: string };
+
+      const data = await request.file();
+      if (!data) throw new ValidationError("No file provided in the request");
+
+      const result = await service.setPreview(fileId, request.userId, {
+        filename: data.filename,
+        file: data.file,
+      });
+
+      return reply.status(200).send(ok(result));
+    },
+
     async listVersions(request: FastifyRequest, reply: FastifyReply) {
       if (!request.userId) throw new UnauthorizedError();
       const { id: fileId } = request.params as { id: string };

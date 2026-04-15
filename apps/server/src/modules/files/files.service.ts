@@ -172,6 +172,34 @@ export function createFilesService(repo: FilesRepository, db: Database) {
     },
 
     // ------------------------------------------------------------------
+    // Upload a manual preview image — POST /files/:id/preview
+    // ------------------------------------------------------------------
+
+    async setPreview(fileId: string, requesterId: string, upload: UploadedFile) {
+      const result = await repo.findFileWithRole(fileId, requesterId);
+      if (result === null) throw new NotFoundError("File", fileId);
+
+      const { file, role } = result;
+      if (role === "viewer") throw new ForbiddenError("Viewers cannot set file previews");
+      if (file.currentVersionId === null) throw new NotFoundError("File has no versions");
+
+      // Validate image extension
+      const ext = path.extname(upload.filename).toLowerCase();
+      const ALLOWED_PREVIEW_EXTS = [".png", ".jpg", ".jpeg", ".gif", ".webp"];
+      if (!ALLOWED_PREVIEW_EXTS.includes(ext)) {
+        throw new ValidationError(
+          `Invalid preview type. Allowed: ${ALLOWED_PREVIEW_EXTS.join(", ")}`,
+        );
+      }
+
+      const previewPath = `${file.projectId}/${fileId}/preview${ext}`;
+      await storage.save(previewPath, upload.file);
+      await repo.updateVersionPreviewPath(file.currentVersionId, previewPath);
+
+      return { fileId, previewPath };
+    },
+
+    // ------------------------------------------------------------------
     // Delete a file (owner only)
     // ------------------------------------------------------------------
 

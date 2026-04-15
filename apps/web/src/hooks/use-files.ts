@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { filesApi, type FileRecord, type LockResult } from "@/lib/api";
 import { useAuth } from "@/contexts/auth";
 import { toast } from "@/hooks/use-toast";
+import { useEffect, useRef, useState } from "react";
 
 const qk = (projectId: string) => ["files", projectId];
 
@@ -100,4 +101,59 @@ export function useDownloadFile() {
     mutationFn: ({ fileId, filename }: { fileId: string; filename: string }) =>
       filesApi.download(accessToken!, fileId, filename),
   });
+}
+
+export function useSetPreview(projectId: string) {
+  const { accessToken } = useAuth();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ fileId, imageFile }: { fileId: string; imageFile: File }) =>
+      filesApi.setPreview(accessToken!, fileId, imageFile),
+    onSuccess: (_data, { fileId }) => {
+      void qc.invalidateQueries({ queryKey: qk(projectId) });
+      // Bust the preview blob cache for this specific file
+      void qc.invalidateQueries({ queryKey: ["preview", fileId] });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Preview upload failed", description: err.message, variant: "destructive" });
+    },
+  });
+}
+
+/**
+ * Fetches the preview image for a single file and returns a stable blob URL.
+ * The blob URL is revoked automatically when the component unmounts or the
+ * query result changes.
+ */
+export function useFilePreview(fileId: string) {
+  const { accessToken } = useAuth();
+  const [blobUrl, setBlobUrl] = useState<string | null>(null);
+  const prevUrlRef = useRef<string | null>(null);
+
+  const query = useQuery({
+    queryKey: ["preview", fileId],
+    queryFn: () => filesApi.preview(accessToken!, fileId),
+    enabled: !!accessToken,
+    staleTime: 60_000,
+    retry: false,
+  });
+
+  useEffect(() => {
+    if (query.data) {
+      // Revoke previous blob URL to avoid leaks
+      if (prevUrlRef.current) URL.revokeObjectURL(prevUrlRef.current);
+      prevUrlRef.current = query.data;
+      setBlobUrl(query.data);
+    } else {
+      setBlobUrl(null);
+    }
+    return () => {
+      if (prevUrlRef.current) {
+        URL.revokeObjectURL(prevUrlRef.current);
+        prevUrlRef.current = null;
+      }
+    };
+  }, [query.data]);
+
+  return blobUrl;
 }

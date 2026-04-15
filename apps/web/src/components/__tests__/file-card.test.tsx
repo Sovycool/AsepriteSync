@@ -3,6 +3,11 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import { FileCard } from "../file-card";
 import type { FileRecord } from "@/lib/api";
 
+// useFilePreview fetches from the network — stub it out for unit tests
+vi.mock("@/hooks/use-files", () => ({
+  useFilePreview: () => null,
+}));
+
 // Radix UI DropdownMenu doesn't render its portal content in jsdom.
 // Mock it to render items inline so we can interact with them.
 vi.mock("@/components/ui/dropdown-menu", () => ({
@@ -50,6 +55,7 @@ const defaultProps = {
   onLock: vi.fn(),
   onUnlock: vi.fn(),
   onReplace: vi.fn(),
+  onSetPreview: vi.fn(),
 };
 
 // With the mocked dropdown, menu items are always visible — no need to open.

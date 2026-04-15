@@ -346,6 +346,12 @@ export const filesApi = {
     const blob = await res.blob();
     return URL.createObjectURL(blob);
   },
+
+  setPreview(token: string, fileId: string, imageFile: File): Promise<{ fileId: string; previewPath: string }> {
+    const fd = new FormData();
+    fd.append("file", imageFile, imageFile.name);
+    return multipartRequest<{ fileId: string; previewPath: string }>(`/files/${fileId}/preview`, token, fd);
+  },
 };
 
 // ---------------------------------------------------------------------------

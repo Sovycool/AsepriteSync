@@ -3,7 +3,7 @@
 import { useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import { LayoutGrid, List, ArrowLeft, Plus } from "lucide-react";
-import { useFiles, useUploadFile, useUpdateFile, useDeleteFile, useLockFile, useUnlockFile, useDownloadFile } from "@/hooks/use-files";
+import { useFiles, useUploadFile, useUpdateFile, useDeleteFile, useLockFile, useUnlockFile, useDownloadFile, useSetPreview } from "@/hooks/use-files";
 import { useProjects } from "@/hooks/use-projects";
 import { useAuth } from "@/contexts/auth";
 import { useProjectPresence } from "@/contexts/ws";
@@ -63,6 +63,7 @@ export default function ProjectDetailPage() {
   const lock = useLockFile(id);
   const unlock = useUnlockFile(id);
   const download = useDownloadFile();
+  const setPreview = useSetPreview(id);
 
   const currentUserId = user?.id ?? "";
 
@@ -92,6 +93,7 @@ export default function ProjectDetailPage() {
     onLock: () => lock.mutate(file.id),
     onUnlock: () => unlock.mutate(file.id),
     onReplace: () => handleReplace(file),
+    onSetPreview: (imageFile: File) => setPreview.mutate({ fileId: file.id, imageFile }),
   });
 
   return (

@@ -1,7 +1,8 @@
 "use client";
 
+import { useRef } from "react";
 import Link from "next/link";
-import { Download, Trash2, Lock, Unlock, RefreshCw } from "lucide-react";
+import { Download, Trash2, Lock, Unlock, RefreshCw, ImagePlus } from "lucide-react";
 import { type FileRecord } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -15,6 +16,7 @@ interface FileRowProps {
   onLock: () => void;
   onUnlock: () => void;
   onReplace: () => void;
+  onSetPreview: (imageFile: File) => void;
 }
 
 export function FileRow({
@@ -26,7 +28,9 @@ export function FileRow({
   onLock,
   onUnlock,
   onReplace,
+  onSetPreview,
 }: FileRowProps) {
+  const previewInputRef = useRef<HTMLInputElement>(null);
   const isLockedByMe = file.lockedBy === currentUserId;
   const isLockedByOther = !!file.lockedBy && !isLockedByMe;
 
@@ -38,6 +42,19 @@ export function FileRow({
         isLockedByMe && "border-primary/50",
       )}
     >
+      {/* Hidden preview image input */}
+      <input
+        ref={previewInputRef}
+        type="file"
+        accept="image/png,image/jpeg,image/gif,image/webp"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) onSetPreview(f);
+          e.target.value = "";
+        }}
+      />
+
       <span className="text-2xl">🎨</span>
 
       {/* Name + meta */}
@@ -82,6 +99,15 @@ export function FileRow({
           title="Replace"
         >
           <RefreshCw className="h-4 w-4" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7"
+          onClick={() => previewInputRef.current?.click()}
+          title="Set Preview"
+        >
+          <ImagePlus className="h-4 w-4" />
         </Button>
         {isLockedByMe ? (
           <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onUnlock} title="Unlock">

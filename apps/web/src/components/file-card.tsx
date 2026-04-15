@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import Link from "next/link";
-import { MoreVertical, Download, Trash2, Lock, Unlock, RefreshCw } from "lucide-react";
+import { MoreVertical, Download, Trash2, Lock, Unlock, RefreshCw, ImagePlus } from "lucide-react";
 import { type FileRecord } from "@/lib/api";
 import {
   DropdownMenu,
@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { useFilePreview } from "@/hooks/use-files";
 
 interface FileCardProps {
   file: FileRecord;
@@ -23,6 +24,7 @@ interface FileCardProps {
   onLock: () => void;
   onUnlock: () => void;
   onReplace: () => void;
+  onSetPreview: (imageFile: File) => void;
 }
 
 export function FileCard({
@@ -34,8 +36,11 @@ export function FileCard({
   onLock,
   onUnlock,
   onReplace,
+  onSetPreview,
 }: FileCardProps) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const previewInputRef = useRef<HTMLInputElement>(null);
+  const previewUrl = useFilePreview(file.id);
 
   const isLockedByMe = file.lockedBy === currentUserId;
   const isLockedByOther = !!file.lockedBy && !isLockedByMe;
@@ -48,6 +53,19 @@ export function FileCard({
         isLockedByMe && "border-primary/50",
       )}
     >
+      {/* Hidden preview image input */}
+      <input
+        ref={previewInputRef}
+        type="file"
+        accept="image/png,image/jpeg,image/gif,image/webp"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) onSetPreview(f);
+          e.target.value = "";
+        }}
+      />
+
       {/* Lock badge */}
       {file.lockedBy && (
         <span
@@ -62,10 +80,21 @@ export function FileCard({
         </span>
       )}
 
-      {/* Icon placeholder — click goes to detail page */}
+      {/* Thumbnail — click goes to detail page */}
       <Link href={`/projects/${projectId}/files/${file.id}`}>
-        <div className="flex h-24 items-center justify-center rounded-md bg-muted text-4xl hover:bg-muted/80 transition-colors">
-          🎨
+        <div className="relative flex h-24 items-center justify-center overflow-hidden rounded-md bg-muted hover:bg-muted/80 transition-colors">
+          {previewUrl ? (
+            // object-cover crops overflow while preserving aspect ratio;
+            // image-rendering: pixelated keeps pixel art sharp at any size
+            <img
+              src={previewUrl}
+              alt={file.name}
+              className="h-full w-full object-cover"
+              style={{ imageRendering: "pixelated" }}
+            />
+          ) : (
+            <span className="text-4xl">🎨</span>
+          )}
         </div>
       </Link>
 
@@ -103,6 +132,10 @@ export function FileCard({
           <DropdownMenuItem onClick={onReplace} disabled={isLockedByOther}>
             <RefreshCw className="mr-2 h-4 w-4" />
             Replace
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => previewInputRef.current?.click()}>
+            <ImagePlus className="mr-2 h-4 w-4" />
+            Set Preview
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           {isLockedByMe ? (

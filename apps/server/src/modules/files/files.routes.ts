@@ -30,6 +30,7 @@ export async function fileRoutes(app: FastifyInstance, options: { db: Database }
 
   // Preview thumbnail (T13)
   app.get("/files/:id/preview", (req, reply) => ctrl.getPreview(req, reply));
+  app.post("/files/:id/preview", (req, reply) => ctrl.setPreview(req, reply));
 
   // Locking (T7)
   app.post("/files/:id/lock", (req, reply) => ctrl.lockFile(req, reply));
