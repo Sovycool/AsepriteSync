@@ -9,6 +9,9 @@ import { config } from "./config.js";
 import { AppError } from "./errors/index.js";
 import { err } from "./lib/response.js";
 import { authRoutes } from "./modules/auth/auth.routes.js";
+import { projectRoutes } from "./modules/projects/projects.routes.js";
+import { usersRoutes } from "./modules/users/users.routes.js";
+import { activityRoutes } from "./modules/activity/activity.routes.js";
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -84,6 +87,10 @@ export async function buildApp(): Promise<FastifyInstance> {
     },
     { prefix: "/auth" },
   );
+
+  await app.register(projectRoutes, { db });
+  await app.register(usersRoutes, { db });
+  await app.register(activityRoutes, { db });
 
   app.get("/healthz", async () => ok({ status: "ok" }));
 

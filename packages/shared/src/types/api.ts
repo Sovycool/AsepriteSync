@@ -19,7 +19,7 @@ export interface ApiError {
 }
 
 export interface ApiMeta {
-  cursor?: string;
+  cursor?: string | null;
   hasMore?: boolean;
   total?: number;
 }
