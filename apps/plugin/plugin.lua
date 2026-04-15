@@ -344,7 +344,7 @@ end
 
 function init(plugin)
 
-  print('[AsepriteSync] Initializing plugin…')
+  print('[AsepriteSync] v1.0.0 — Initializing plugin…')
 
   -- Initialise modules in dependency order
   storage  = Storage.new(plugin.preferences)
@@ -354,7 +354,7 @@ function init(plugin)
   explorer = Explorer.new(api, auth, plugin.path)
   explorer:setSync(sync)  -- inject after both are created (avoids circular dep)
 
-  print('[AsepriteSync] Plugin initialized.')
+  print('[AsepriteSync] v1.0.0 — Plugin initialized.')
 
   -- Create the "AsepriteSync" submenu inside File > Scripts
   plugin:newMenuGroup{
@@ -406,7 +406,7 @@ function init(plugin)
     onclick = cmd_settings,
   }
 
-  print('[AsepriteSync] Commands registered.')
+  print('[AsepriteSync] v1.0.0 — Commands registered.')
 
   -- Optionally verify the stored token in the background on startup
   if auth:isLoggedIn() then

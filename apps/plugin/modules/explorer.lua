@@ -79,134 +79,132 @@ function Explorer:open()
     return
   end
 
-  -- Shared mutable state (modified by async callbacks and button handlers)
-  local state = {
-    projects   = {},  -- array of project objects from the server
-    files      = {},  -- array of file objects for the selected project
-    dlg        = nil, -- set once Dialog is constructed (before :show)
-  }
+  -- Mutable state
+  local state = { projects = {}, files = {}, projectIdx = 1, fileIdx = 1 }
 
-  -- Forward declarations
-  local loadProjects, loadFiles
+  -- Fetch helpers — work with both synchronous (curl fallback) and
+  -- asynchronous (app.http) transports because callbacks are invoked
+  -- inline for sync and from the event-loop for async.  We call these
+  -- before dlg:show so that data is ready when the dialog first paints.
 
-  -- ------------------------------------------------------------------
-  -- Load helpers
-  -- ------------------------------------------------------------------
-
-  loadFiles = function(projectIdx)
+  local function fetchFiles(projectIdx)
     local project = state.projects[projectIdx]
     if not project then return end
-
     state.files = {}
-    state.dlg:modify{ id = 'files',   items   = { '(loading…)' } }
-    state.dlg:modify{ id = 'status',  text    = 'Loading files for ' .. project.name .. '…' }
-    state.dlg:modify{ id = 'open',    enabled = false }
-    state.dlg:modify{ id = 'info',    text    = '' }
-
     self._api:get('/projects/' .. project.id .. '/files', function(data, err)
-      if err then
-        state.dlg:modify{ id = 'status', text = 'Error: ' .. fmt_err(err) }
-        state.dlg:modify{ id = 'files',  items = {} }
-        return
-      end
-
-      state.files = data or {}
-
-      if #state.files == 0 then
-        state.dlg:modify{ id = 'files',  items   = {} }
-        state.dlg:modify{ id = 'status', text    = 'No files in this project yet.' }
-        return
-      end
-
-      local items = {}
-      for _, f in ipairs(state.files) do
-        items[#items + 1] = file_label(f)
-      end
-
-      state.dlg:modify{ id = 'files',   items   = items }
-      state.dlg:modify{ id = 'status',  text    = tostring(#state.files) .. ' file(s) — ' .. project.name }
-      state.dlg:modify{ id = 'open',    enabled = true }
+      if not err then state.files = data or {} end
     end)
   end
 
-  loadProjects = function()
-    state.projects = {}
-    state.files    = {}
-    state.dlg:modify{ id = 'project', options = { '(loading…)' } }
-    state.dlg:modify{ id = 'files',   items   = {} }
-    state.dlg:modify{ id = 'status',  text    = 'Fetching projects…' }
-    state.dlg:modify{ id = 'open',    enabled = false }
+  local fetchProjectsErr = nil
+  self._api:get('/projects', function(data, err)
+    if err then
+      fetchProjectsErr = err
+      return
+    end
+    state.projects = data or {}
+  end)
 
-    self._api:get('/projects', function(data, err)
-      if err then
-        state.dlg:modify{ id = 'project', options = { '(error)' } }
-        state.dlg:modify{ id = 'status',  text    = 'Error: ' .. fmt_err(err) }
-        return
-      end
+  if fetchProjectsErr then
+    local dlg = Dialog('AsepriteSync — Error')
+    dlg:label{ label = 'Could not load projects:' }
+    dlg:label{ label = fmt_err(fetchProjectsErr) }
+    dlg:button{ id = 'ok', text = 'OK', focus = true }
+    dlg:show{ wait = true }
+    return
+  end
 
-      state.projects = data or {}
+  if #state.projects == 0 then
+    local dlg = Dialog('AsepriteSync')
+    dlg:label{ label = 'You have no projects.' }
+    dlg:label{ label = 'Create one on the web dashboard first.' }
+    dlg:button{ id = 'ok', text = 'OK', focus = true }
+    dlg:show{ wait = true }
+    return
+  end
 
-      if #state.projects == 0 then
-        state.dlg:modify{ id = 'project', options = { '(no projects)' } }
-        state.dlg:modify{ id = 'status',  text    = 'You have no projects. Create one on the web.' }
-        return
-      end
+  -- Pre-fetch files for the first project
+  fetchFiles(1)
 
-      local names = {}
-      for _, p in ipairs(state.projects) do
-        names[#names + 1] = p.name .. '  [' .. (p.role or '?') .. ']'
-      end
+  -- ------------------------------------------------------------------
+  -- Build project name list
+  -- ------------------------------------------------------------------
 
-      state.dlg:modify{ id = 'project', options = names }
-      -- Automatically load files for the first project
-      loadFiles(1)
-    end)
+  local projectNames = {}
+  for _, p in ipairs(state.projects) do
+    projectNames[#projectNames + 1] = p.name .. '  [' .. (p.role or '?') .. ']'
+  end
+
+  local function fileItems()
+    local options = {}
+    for _, f in ipairs(state.files) do
+      options[#options + 1] = file_label(f)
+    end
+    return options
+  end
+
+  local function statusText()
+    local proj = state.projects[state.projectIdx]
+    if #state.files == 0 then
+      return 'No files in ' .. (proj and proj.name or '?')
+    end
+    return tostring(#state.files) .. ' file(s) — ' .. (proj and proj.name or '?')
   end
 
   -- ------------------------------------------------------------------
-  -- Build the dialog
+  -- Build the dialog (data is already available from the pre-fetch)
   -- ------------------------------------------------------------------
 
   local dlg = Dialog{ title = 'AsepriteSync — File Explorer' }
-  state.dlg = dlg
 
-  -- Project selector (populated asynchronously)
   dlg:combobox{
     id       = 'project',
     label    = 'Project:',
-    options  = { '(loading…)' },
+    options  = projectNames,
     onchange = function()
-      -- dlg.data.project is the 1-based selected index
-      loadFiles(dlg.data.project)
+      state.projectIdx = dlg.data.project
+      fetchFiles(state.projectIdx)
+      local options = fileItems()
+      dlg:modify{ id = 'files',  options   = options }
+      dlg:modify{ id = 'open',   enabled = #options > 0 }
+      dlg:modify{ id = 'status', text    = statusText() }
+      dlg:modify{ id = 'info',   text    = '' }
     end,
   }
 
-  -- Refresh button sits on the same logical row as the combobox
   dlg:button{
     id      = 'refresh',
     text    = 'Refresh',
-    onclick = function() loadProjects() end,
+    onclick = function()
+      fetchFiles(state.projectIdx)
+      local options = fileItems()
+      dlg:modify{ id = 'files',  options   = options }
+      dlg:modify{ id = 'open',   enabled = #options > 0 }
+      dlg:modify{ id = 'status', text    = statusText() }
+    end,
   }
 
   dlg:separator()
 
-  -- File list (populated after project selection)
-  dlg:listbox{
+  local initItems = fileItems()
+  dlg:combobox{
     id       = 'files',
-    items    = {},
+    options  = initItems,
     onchange = function()
-      -- Update info label when a file is selected
-      local idx = dlg.data.files
-      local f = state.files[idx]
+      -- dlg.data.files may be an integer index or the selected string
+      local val = dlg.data.files
+      local idx = type(val) == 'number' and val or nil
+      if not idx then
+        for i, label in ipairs(fileItems()) do
+          if label == val then idx = i; break end
+        end
+      end
+      state.fileIdx = idx or 1
+      local f = state.files[state.fileIdx]
       if f then
-        local info = 'v' .. tostring(f.currentVersionId and '?' or '1')
-        if f.lockedBy then
-          info = info .. '  •  Locked'
-        end
-        if f.updatedAt then
-          -- Extract date part from ISO string
-          info = info .. '  •  ' .. (f.updatedAt:sub(1, 10))
-        end
+        local info = ''
+        if f.lockedBy then info = info .. 'Locked  •  ' end
+        if f.updatedAt then info = info .. f.updatedAt:sub(1, 10) end
         dlg:modify{ id = 'info', text = info }
       else
         dlg:modify{ id = 'info', text = '' }
@@ -214,38 +212,33 @@ function Explorer:open()
     end,
   }
 
-  -- Info line for selected file
-  dlg:label{ id = 'info', label = '' }
-
+  dlg:label{ id = 'info',   label = '' }
+  dlg:separator()
+  dlg:label{ id = 'status', label = statusText() }
   dlg:separator()
 
-  -- Status line
-  dlg:label{ id = 'status', label = 'Connecting…' }
-
-  dlg:separator()
-
-  -- Action buttons (Open closes the dialog; Cancel closes without action)
-  dlg:button{ id = 'open',   text = 'Open in Aseprite', focus = true,  enabled = false }
+  dlg:button{ id = 'open',   text = 'Open in Aseprite', focus = true,  enabled = #initItems > 0 }
   dlg:button{ id = 'cancel', text = 'Cancel',            focus = false }
-
-  -- Kick off async project load BEFORE showing the dialog so the request
-  -- is in-flight before Aseprite starts blocking on dlg:show.
-  loadProjects()
 
   dlg:show{ wait = true }
 
   -- ------------------------------------------------------------------
-  -- Handle the result after the dialog closes
+  -- Handle result after dialog closes
   -- ------------------------------------------------------------------
 
   if not dlg.data.open then return end
 
-  local fileIdx = dlg.data.files
-  if not fileIdx or fileIdx < 1 then
-    return
+  -- dlg.data.files may be an integer or the selected string after dialog close
+  local val = dlg.data.files
+  if type(val) == 'number' then
+    state.fileIdx = val
+  elseif type(val) == 'string' and val ~= '' then
+    for i, label in ipairs(fileItems()) do
+      if label == val then state.fileIdx = i; break end
+    end
   end
 
-  local file = state.files[fileIdx]
+  local file = state.files[state.fileIdx]
   if not file then return end
 
   self:_downloadAndOpen(file)

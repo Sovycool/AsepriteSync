@@ -1,20 +1,116 @@
--- API module — thin HTTP wrapper around Aseprite's built-in http.request.
+-- API module — thin HTTP wrapper.
+--
+-- Uses app.http (Aseprite 1.3+ with libcurl) when available,
+-- falls back to the system `curl` binary otherwise.
 --
 -- Every request:
 --   • Sets Content-Type: application/json and Accept: application/json
 --   • Attaches the Bearer token if one is set
 --   • Parses the server's { data, error } envelope
 --   • Calls callback(data, nil) on success or callback(nil, err) on failure
---
--- All callbacks are called asynchronously from Aseprite's event loop.
 
 local json = require('modules.json')
 
 local Api = {}
 Api.__index = Api
 
--- Create a new Api client.
--- @param baseUrl  string  e.g. "http://localhost:4000"
+-- tmpname() is blocked in Aseprite's Lua sandbox; generate paths manually.
+local function tmpname()
+  return '/tmp/asepritesync_' .. tostring(os.time()) .. '_' .. tostring(math.random(100000, 999999))
+end
+
+-- ---------------------------------------------------------------------------
+-- curl fallback (used when app.http is nil)
+-- ---------------------------------------------------------------------------
+-- Executes an HTTP request via the system `curl` binary.
+-- opts mirrors the app.http.request table: url, method, headers, body, callback.
+-- callback receives { statusCode, body } on success or { error } on failure.
+local function curlHttpRequest(opts)
+  local method  = opts.method or 'GET'
+  local url     = opts.url
+  local headers = opts.headers or {}
+  local body    = opts.body
+  local cb      = opts.callback
+
+  -- Write body to a temp file to avoid shell-quoting issues with JSON/binary data
+  local bodyPath = nil
+  if body and body ~= '' then
+    bodyPath = tmpname()
+    local f = io.open(bodyPath, 'wb')
+    if not f then
+      cb({ error = 'Cannot write temp file for request body' })
+      return
+    end
+    f:write(body)
+    f:close()
+  end
+
+  local outPath = tmpname()
+
+  -- Build the curl command.
+  -- We single-quote every substituted value; JWT tokens and server URLs
+  -- never contain single quotes, so this is safe for our use-case.
+  local parts = {
+    'curl', '-s',
+    '-o',  "'" .. outPath  .. "'",
+    '-w',  "'%{http_code}'",
+    '-X',  method,
+  }
+
+  for k, v in pairs(headers) do
+    parts[#parts + 1] = '-H'
+    parts[#parts + 1] = "'" .. k .. ': ' .. v .. "'"
+  end
+
+  if bodyPath then
+    parts[#parts + 1] = "--data-binary"
+    parts[#parts + 1] = "'@" .. bodyPath .. "'"
+  end
+
+  parts[#parts + 1] = "'" .. url .. "'"
+
+  -- Prefix with env reset to avoid Steam Linux Runtime hijacking libcurl.so.4
+  local cmd  = 'env LD_LIBRARY_PATH="" LD_PRELOAD="" ' .. table.concat(parts, ' ') .. ' 2>/dev/null'
+
+  local pipe = io.popen(cmd)
+  local httpCodeStr = pipe and pipe:read('*all') or ''
+  if pipe then pipe:close() end
+
+  -- Read response body from temp file
+  local rf       = io.open(outPath, 'rb')
+  local respBody = rf and rf:read('*all') or ''
+  if rf then rf:close() end
+
+  -- Clean up temp files (pcall: Aseprite sandbox may block os.remove)
+  pcall(os.remove, outPath)
+  if bodyPath then pcall(os.remove, bodyPath) end
+
+  local code = tonumber(httpCodeStr:match('%d+$')) or 0
+  if httpCodeStr == '' then
+    cb({ error = 'curl is not installed or could not be executed' })
+    return
+  end
+  if code == 0 then
+    cb({ error = 'Connection refused — is the server running? (' .. opts.url .. ')' })
+    return
+  end
+
+  cb({ statusCode = code, body = respBody })
+end
+
+-- Dispatch to app.http.request or curlHttpRequest based on availability.
+local function httpRequest(opts)
+  if app.http then
+    app.http.request(opts)
+  else
+    curlHttpRequest(opts)
+  end
+end
+
+-- ---------------------------------------------------------------------------
+-- Constructor
+-- ---------------------------------------------------------------------------
+
 function Api.new(baseUrl)
   return setmetatable({
     _baseUrl = baseUrl or 'http://localhost:4000',
@@ -22,21 +118,10 @@ function Api.new(baseUrl)
   }, Api)
 end
 
-function Api:setToken(token)
-  self._token = token
-end
-
-function Api:clearToken()
-  self._token = nil
-end
-
-function Api:setBaseUrl(url)
-  self._baseUrl = url
-end
-
-function Api:getBaseUrl()
-  return self._baseUrl
-end
+function Api:setToken(token)    self._token = token    end
+function Api:clearToken()       self._token = nil      end
+function Api:setBaseUrl(url)    self._baseUrl = url    end
+function Api:getBaseUrl()       return self._baseUrl   end
 
 -- ---------------------------------------------------------------------------
 -- Core request method
@@ -67,13 +152,12 @@ function Api:request(method, path, body, callback)
     bodyStr = encoded
   end
 
-  app.http.request{
+  httpRequest{
     url     = self._baseUrl .. path,
     method  = method,
     headers = headers,
     body    = bodyStr,
     callback = function(response)
-      -- Network-level error (no response received)
       if response.error then
         callback(nil, {
           code    = 'NETWORK_ERROR',
@@ -82,9 +166,7 @@ function Api:request(method, path, body, callback)
         return
       end
 
-      -- Try to parse the JSON envelope
       if not response.body or response.body == '' then
-        -- 204 No Content or similar — treat as success with nil data
         callback(nil, nil)
         return
       end
@@ -98,13 +180,13 @@ function Api:request(method, path, body, callback)
         return
       end
 
-      -- Server-side error inside the envelope
-      if result ~= json.null and type(result) == 'table' and result.error then
+      -- result.error may be json.null (JSON null) — treat that as no error
+      if result ~= json.null and type(result) == 'table'
+         and result.error ~= nil and result.error ~= json.null then
         callback(nil, result.error)
         return
       end
 
-      -- Success — unwrap .data
       local data = (type(result) == 'table' and result.data ~= nil)
                    and result.data
                    or  result
@@ -133,22 +215,19 @@ function Api:delete(path, callback)
   self:request('DELETE', path, nil, callback)
 end
 
--- Multipart file upload — sends raw bytes using Aseprite's http.request.
+-- Multipart file upload.
 -- @param path      string
 -- @param filePath  string              absolute path on disk
--- @param filename  string              filename to use in the multipart disposition
--- @param method    string|function     HTTP method ("POST" or "PUT"); omit for "POST"
---                                      (backward-compatible: if this arg is a function it
---                                      is treated as the callback and method defaults to "POST")
+-- @param filename  string              filename for the multipart disposition
+-- @param method    string|function     "POST" or "PUT" (omit for "POST")
 -- @param callback  function(data, err)
 function Api:upload(path, filePath, filename, method, callback)
-  -- Backward-compat: old callers pass (path, filePath, filename, callback)
   if type(method) == 'function' then
     callback = method
     method   = 'POST'
   end
   method = method or 'POST'
-  -- Read the file bytes
+
   local f, openErr = io.open(filePath, 'rb')
   if not f then
     callback(nil, { code = 'FILE_ERROR', message = 'Cannot open file: ' .. tostring(openErr) })
@@ -176,7 +255,7 @@ function Api:upload(path, filePath, filename, method, callback)
     headers['Authorization'] = 'Bearer ' .. self._token
   end
 
-  app.http.request{
+  httpRequest{
     url     = self._baseUrl .. path,
     method  = method,
     headers = headers,
@@ -191,7 +270,8 @@ function Api:upload(path, filePath, filename, method, callback)
         callback(nil, { code = 'PARSE_ERROR', message = 'Non-JSON upload response' })
         return
       end
-      if type(result) == 'table' and result.error then
+      if type(result) == 'table'
+         and result.error ~= nil and result.error ~= json.null then
         callback(nil, result.error)
         return
       end
@@ -202,7 +282,6 @@ function Api:upload(path, filePath, filename, method, callback)
 end
 
 -- Download a file as raw bytes — bypasses the JSON envelope.
--- Used for .aseprite binary downloads.
 -- @param path      string   e.g. "/files/<id>"
 -- @param callback  function(bytes: string, err)
 function Api:downloadBinary(path, callback)
@@ -214,7 +293,7 @@ function Api:downloadBinary(path, callback)
     headers['Authorization'] = 'Bearer ' .. self._token
   end
 
-  app.http.request{
+  httpRequest{
     url     = self._baseUrl .. path,
     method  = 'GET',
     headers = headers,
