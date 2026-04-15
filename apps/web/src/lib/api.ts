@@ -327,11 +327,11 @@ export const filesApi = {
   },
 
   lock(token: string, fileId: string): Promise<LockResult> {
-    return authedRequest<LockResult>(`/files/${fileId}/lock`, token, { method: "POST" });
+    return authedRequest<LockResult>(`/files/${fileId}/lock`, token, { method: "POST", body: "{}" });
   },
 
   unlock(token: string, fileId: string): Promise<LockResult> {
-    return authedRequest<LockResult>(`/files/${fileId}/lock`, token, { method: "DELETE" });
+    return authedRequest<LockResult>(`/files/${fileId}/lock`, token, { method: "DELETE", body: "{}" });
   },
 
   /** Fetches the thumbnail PNG and returns a blob object URL. Caller must revoke it. */
