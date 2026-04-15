@@ -5,6 +5,11 @@
   "description": "Synchronize and collaborate on Aseprite files via AsepriteSync server",
   "author": "Helios",
   "license": "MIT",
+  "contributes": {
+    "scripts": [
+      { "path": "./plugin.lua" }
+    ]
+  },
   "scripts": {
     "bundle": "rm -f asepritesync.aseprite-extension && zip -r asepritesync.aseprite-extension package.json plugin.lua modules/ && echo 'Built: asepritesync.aseprite-extension'"
   }
