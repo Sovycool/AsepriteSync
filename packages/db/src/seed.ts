@@ -1,22 +1,30 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import bcrypt from "bcrypt";
-import { v4 as uuidv4 } from "uuid";
 import { db } from "./client.js";
 import { users, projects, projectMembers, files, fileVersions } from "./schema.js";
 
 const BCRYPT_ROUNDS = 12;
 
 // ---------------------------------------------------------------------------
-// IDs
+// Wipe existing seed data so the script is idempotent
+// CASCADE handles the circular FK between files ↔ file_versions
+// ---------------------------------------------------------------------------
+console.log("Clearing existing data…");
+await db.execute(
+  sql`TRUNCATE TABLE file_versions, files, project_members, projects, users RESTART IDENTITY CASCADE`,
+);
+
+// ---------------------------------------------------------------------------
+// Fixed IDs — deterministic so the seed is idempotent across multiple runs
 // ---------------------------------------------------------------------------
 
-const aliceId = uuidv4();
-const bobId = uuidv4();
-const charlieId = uuidv4();
-const project1Id = uuidv4();
-const project2Id = uuidv4();
-const file1Id = uuidv4();
-const version1Id = uuidv4();
+const aliceId   = "11111111-0000-0000-0000-000000000001";
+const bobId     = "11111111-0000-0000-0000-000000000002";
+const charlieId = "11111111-0000-0000-0000-000000000003";
+const project1Id = "22222222-0000-0000-0000-000000000001";
+const project2Id = "22222222-0000-0000-0000-000000000002";
+const file1Id    = "33333333-0000-0000-0000-000000000001";
+const version1Id = "44444444-0000-0000-0000-000000000001";
 
 // ---------------------------------------------------------------------------
 // Seed users
