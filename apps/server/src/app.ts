@@ -1,6 +1,7 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
+import multipart from "@fastify/multipart";
 import rateLimit from "@fastify/rate-limit";
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
@@ -12,6 +13,7 @@ import { authRoutes } from "./modules/auth/auth.routes.js";
 import { projectRoutes } from "./modules/projects/projects.routes.js";
 import { usersRoutes } from "./modules/users/users.routes.js";
 import { activityRoutes } from "./modules/activity/activity.routes.js";
+import { fileRoutes } from "./modules/files/files.routes.js";
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -26,6 +28,13 @@ export async function buildApp(): Promise<FastifyInstance> {
   // -------------------------------------------------------------------------
 
   await app.register(cookie);
+
+  await app.register(multipart, {
+    limits: {
+      fileSize: config.MAX_FILE_SIZE_MB * 1024 * 1024,
+      files: 1,
+    },
+  });
 
   await app.register(cors, {
     origin: config.CORS_ORIGIN,
@@ -89,6 +98,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   );
 
   await app.register(projectRoutes, { db });
+  await app.register(fileRoutes, { db });
   await app.register(usersRoutes, { db });
   await app.register(activityRoutes, { db });
 
