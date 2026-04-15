@@ -70,7 +70,7 @@ export function FileCard({
       {file.lockedBy && (
         <span
           className={cn(
-            "absolute right-2 top-2 rounded-full px-2 py-0.5 text-[10px] font-semibold",
+            "absolute right-2 top-2 z-10 rounded-full px-2 py-0.5 text-[10px] font-semibold",
             isLockedByMe
               ? "bg-primary/10 text-primary"
               : "bg-destructive/10 text-destructive",
