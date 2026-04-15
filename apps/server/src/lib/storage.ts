@@ -73,6 +73,17 @@ export const storage = {
   },
 
   /**
+   * Copy a stored file from one relative path to another.
+   * Creates any missing parent directories.
+   */
+  async copy(srcRelative: string, destRelative: string): Promise<void> {
+    const src = path.join(config.STORAGE_PATH, srcRelative);
+    const dest = path.join(config.STORAGE_PATH, destRelative);
+    await fs.promises.mkdir(path.dirname(dest), { recursive: true });
+    await fs.promises.copyFile(src, dest);
+  },
+
+  /**
    * Check whether a stored file exists.
    */
   async exists(relativePath: string): Promise<boolean> {

@@ -1,4 +1,4 @@
-import { eq, desc, lt, and, inArray } from "drizzle-orm";
+import { eq, desc, lt, and, inArray, asc, notInArray, count } from "drizzle-orm";
 import type { Database } from "@asepritesync/db";
 import { files, fileVersions, projectMembers } from "@asepritesync/db";
 import type { UserRole } from "@asepritesync/shared";
@@ -146,6 +146,77 @@ export function createFilesRepository(db: Database) {
 
     async deleteFile(id: string) {
       await db.delete(files).where(eq(files.id, id));
+    },
+
+    // ------------------------------------------------------------------
+    // Version history (T6)
+    // ------------------------------------------------------------------
+
+    async listVersionsPaginated(fileId: string, cursor?: string, limit = 50) {
+      const conditions = [eq(fileVersions.fileId, fileId)];
+      if (cursor !== undefined) {
+        conditions.push(lt(fileVersions.createdAt, decodeCursor(cursor)));
+      }
+      return db
+        .select()
+        .from(fileVersions)
+        .where(and(...conditions))
+        .orderBy(desc(fileVersions.versionNumber))
+        .limit(limit + 1);
+    },
+
+    async findVersionByFileAndNumber(fileId: string, versionNumber: number) {
+      const [row] = await db
+        .select()
+        .from(fileVersions)
+        .where(
+          and(eq(fileVersions.fileId, fileId), eq(fileVersions.versionNumber, versionNumber)),
+        )
+        .limit(1);
+      return row ?? null;
+    },
+
+    async countVersions(fileId: string): Promise<number> {
+      const [row] = await db
+        .select({ n: count() })
+        .from(fileVersions)
+        .where(eq(fileVersions.fileId, fileId));
+      return row?.n ?? 0;
+    },
+
+    /**
+     * Returns the oldest non-pinned versions that are NOT the current version,
+     * up to `deleteCount` items, ordered oldest-first (FIFO eviction).
+     */
+    async findOldestEvictableVersions(
+      fileId: string,
+      currentVersionId: string,
+      deleteCount: number,
+    ) {
+      return db
+        .select()
+        .from(fileVersions)
+        .where(
+          and(
+            eq(fileVersions.fileId, fileId),
+            eq(fileVersions.isPinned, false),
+            notInArray(fileVersions.id, [currentVersionId]),
+          ),
+        )
+        .orderBy(asc(fileVersions.versionNumber))
+        .limit(deleteCount);
+    },
+
+    async deleteVersionsByIds(ids: string[]) {
+      if (ids.length === 0) return;
+      await db.delete(fileVersions).where(inArray(fileVersions.id, ids));
+    },
+
+    async updateVersionPreviewPath(versionId: string, previewPath: string) {
+      await db
+        .update(fileVersions)
+        .set({ previewPath })
+        .where(eq(fileVersions.id, versionId));
     },
 
     // ------------------------------------------------------------------

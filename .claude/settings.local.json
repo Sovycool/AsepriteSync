@@ -9,7 +9,8 @@
       "Bash(pnpm --filter @asepritesync/server typecheck)",
       "Bash(pnpm --filter @asepritesync/server test)",
       "Bash(git add *)",
-      "Bash(git commit -m ' *)"
+      "Bash(git commit -m ' *)",
+      "Bash(grep -n \"^  },$\\\\|^  async\\\\|^}\" /home/sovann/Repositories/Web/AsepriteSync/apps/server/src/modules/files/files.repository.ts)"
     ]
   }
 }

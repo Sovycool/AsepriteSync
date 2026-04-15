@@ -16,11 +16,15 @@ export async function fileRoutes(app: FastifyInstance, options: { db: Database }
   app.get("/projects/:id/files", (req, reply) => ctrl.listProjectFiles(req, reply));
   app.post("/projects/:id/files", (req, reply) => ctrl.uploadFile(req, reply));
 
+  // Static sub-routes registered BEFORE parameterised :id routes
+  app.post("/files/batch-download", (req, reply) => ctrl.batchDownload(req, reply));
+
   // File-level routes
   app.get("/files/:id", (req, reply) => ctrl.downloadFile(req, reply));
+  app.put("/files/:id", (req, reply) => ctrl.updateFile(req, reply));
   app.delete("/files/:id", (req, reply) => ctrl.deleteFile(req, reply));
 
-  // Batch download must be registered BEFORE the `:id` param route to
-  // avoid Fastify matching "batch-download" as a file ID
-  app.post("/files/batch-download", (req, reply) => ctrl.batchDownload(req, reply));
+  // Version history & restore
+  app.get("/files/:id/versions", (req, reply) => ctrl.listVersions(req, reply));
+  app.post("/files/:id/versions/:v/restore", (req, reply) => ctrl.restoreVersion(req, reply));
 }

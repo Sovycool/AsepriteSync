@@ -4,6 +4,7 @@ import type { Readable } from "node:stream";
 import type { Database } from "@asepritesync/db";
 import {
   ForbiddenError,
+  LockedError,
   NotFoundError,
   ValidationError,
 } from "../../errors/index.js";
@@ -189,6 +190,168 @@ export function createFilesService(repo: FilesRepository, db: Database) {
       }
 
       return entries;
+    },
+
+    // ------------------------------------------------------------------
+    // Update file — PUT /files/:id  (T6)
+    // ------------------------------------------------------------------
+
+    async updateFile(
+      fileId: string,
+      requesterId: string,
+      upload: UploadedFile,
+    ) {
+      const result = await repo.findFileWithRole(fileId, requesterId);
+      if (result === null) throw new NotFoundError("File", fileId);
+
+      const { file, role } = result;
+
+      // Authorization: editor or owner
+      if (role === "viewer") throw new ForbiddenError("Viewers cannot update files");
+
+      // Lock check: if locked by someone else and not expired, deny
+      const now = new Date();
+      if (
+        file.lockedBy !== null &&
+        file.lockedBy !== requesterId &&
+        file.lockExpiresAt !== null &&
+        file.lockExpiresAt > now
+      ) {
+        throw new LockedError("File is locked by another user", {
+          lockedBy: file.lockedBy,
+          lockExpiresAt: file.lockExpiresAt.toISOString(),
+        });
+      }
+
+      // Validate extension
+      const ext = path.extname(upload.filename).toLowerCase();
+      if (!(ALLOWED_EXTENSIONS as readonly string[]).includes(ext)) {
+        throw new ValidationError(
+          `Invalid file type. Allowed: ${ALLOWED_EXTENSIONS.join(", ")}`,
+        );
+      }
+
+      const latestVersionNumber = await repo.getLatestVersionNumber(fileId);
+      const newVersionNumber = latestVersionNumber + 1;
+      const newVersionId = crypto.randomUUID();
+      const storagePath = `${file.projectId}/${fileId}/${newVersionNumber}.aseprite`;
+
+      // Save upload + compute hash/size
+      const { hash, sizeBytes } = await storage.save(storagePath, upload.file);
+
+      // Deduplication: if hash matches current version, discard and return 200
+      if (file.currentVersionId !== null) {
+        const currentVersion = await repo.findVersionById(file.currentVersionId);
+        if (currentVersion !== null && currentVersion.hashSha256 === hash) {
+          // Clean up the just-saved duplicate file
+          await storage.delete(storagePath);
+          return { file: serializeFile(file), version: serializeVersion(currentVersion), isDuplicate: true };
+        }
+      }
+
+      // Create new version record
+      const version = await repo.createVersion({
+        id: newVersionId,
+        fileId,
+        versionNumber: newVersionNumber,
+        authorId: requesterId,
+        hashSha256: hash,
+        sizeBytes,
+        storagePath,
+      });
+
+      // Update current version pointer
+      await repo.updateCurrentVersion(fileId, newVersionId);
+
+      // FIFO cleanup: evict oldest non-pinned versions over the limit
+      const totalVersions = await repo.countVersions(fileId);
+      const maxVersions = Number(process.env["MAX_VERSIONS_PER_FILE"] ?? 50);
+      if (totalVersions > maxVersions) {
+        const excess = totalVersions - maxVersions;
+        const toEvict = await repo.findOldestEvictableVersions(fileId, newVersionId, excess);
+        await repo.deleteVersionsByIds(toEvict.map((v) => v.id));
+        for (const v of toEvict) {
+          await storage.delete(v.storagePath).catch((e: unknown) => {
+            console.error(`[storage] eviction failed for ${v.storagePath}:`, e);
+          });
+        }
+      }
+
+      logActivity(db, {
+        userId: requesterId,
+        projectId: file.projectId,
+        action: "file:updated",
+        targetType: "file",
+        targetId: fileId,
+        metadata: { versionNumber: newVersionNumber, sizeBytes },
+      });
+
+      return { file: serializeFile({ ...file, currentVersionId: newVersionId }), version: serializeVersion(version), isDuplicate: false };
+    },
+
+    // ------------------------------------------------------------------
+    // Version history — GET /files/:id/versions  (T6)
+    // ------------------------------------------------------------------
+
+    async listVersions(fileId: string, requesterId: string, query: ListFilesQuery) {
+      const result = await repo.findFileWithRole(fileId, requesterId);
+      if (result === null) throw new NotFoundError("File", fileId);
+
+      const raw = await repo.listVersionsPaginated(fileId, query.cursor, query.limit);
+      const { items, pageInfo } = paginate(raw, query.limit);
+
+      return {
+        versions: items.map(serializeVersion),
+        meta: { cursor: pageInfo.cursor, hasMore: pageInfo.hasMore },
+      };
+    },
+
+    // ------------------------------------------------------------------
+    // Restore version — POST /files/:id/versions/:v/restore  (T6)
+    // ------------------------------------------------------------------
+
+    async restoreVersion(fileId: string, requesterId: string, versionNumber: number) {
+      const result = await repo.findFileWithRole(fileId, requesterId);
+      if (result === null) throw new NotFoundError("File", fileId);
+
+      const { file, role } = result;
+      if (role === "viewer") throw new ForbiddenError("Viewers cannot restore versions");
+
+      const targetVersion = await repo.findVersionByFileAndNumber(fileId, versionNumber);
+      if (targetVersion === null) {
+        throw new NotFoundError(`Version ${versionNumber.toString()} of file`);
+      }
+
+      // Create a new version that copies the target version's file content
+      const latestVersionNumber = await repo.getLatestVersionNumber(fileId);
+      const newVersionNumber = latestVersionNumber + 1;
+      const newVersionId = crypto.randomUUID();
+      const newStoragePath = `${file.projectId}/${fileId}/${newVersionNumber}.aseprite`;
+
+      await storage.copy(targetVersion.storagePath, newStoragePath);
+
+      const newVersion = await repo.createVersion({
+        id: newVersionId,
+        fileId,
+        versionNumber: newVersionNumber,
+        authorId: requesterId,
+        hashSha256: targetVersion.hashSha256,
+        sizeBytes: targetVersion.sizeBytes,
+        storagePath: newStoragePath,
+      });
+
+      await repo.updateCurrentVersion(fileId, newVersionId);
+
+      logActivity(db, {
+        userId: requesterId,
+        projectId: file.projectId,
+        action: "file:restored",
+        targetType: "file",
+        targetId: fileId,
+        metadata: { restoredFromVersion: versionNumber, newVersion: newVersionNumber },
+      });
+
+      return serializeVersion(newVersion);
     },
   };
 }

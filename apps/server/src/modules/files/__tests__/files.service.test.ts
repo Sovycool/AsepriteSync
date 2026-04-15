@@ -18,6 +18,7 @@ vi.mock("../../../lib/storage.js", () => ({
     save: vi.fn().mockResolvedValue({ hash: "abc123", sizeBytes: 1024 }),
     readStream: vi.fn().mockReturnValue(Readable.from(["data"])),
     delete: vi.fn().mockResolvedValue(undefined),
+    copy: vi.fn().mockResolvedValue(undefined),
   },
 }));
 
@@ -81,6 +82,13 @@ function makeRepo(overrides: Partial<FilesRepository> = {}): FilesRepository {
     updateCurrentVersion: vi.fn().mockResolvedValue(undefined),
     deleteFile: vi.fn().mockResolvedValue(undefined),
     findMemberRole: vi.fn().mockResolvedValue("owner"),
+    // T6
+    listVersionsPaginated: vi.fn().mockResolvedValue([makeVersion()]),
+    findVersionByFileAndNumber: vi.fn().mockResolvedValue(makeVersion()),
+    countVersions: vi.fn().mockResolvedValue(1),
+    findOldestEvictableVersions: vi.fn().mockResolvedValue([]),
+    deleteVersionsByIds: vi.fn().mockResolvedValue(undefined),
+    updateVersionPreviewPath: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   };
 }
@@ -207,6 +215,119 @@ describe("FilesService", () => {
 
       expect(repo.deleteFile).toHaveBeenCalledWith("file-1");
       expect(storage.delete).toHaveBeenCalledWith("proj-1/file-1/1.aseprite");
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  describe("updateFile (T6)", () => {
+    it("throws ForbiddenError for viewers", async () => {
+      const repo = makeRepo({
+        findFileWithRole: vi.fn().mockResolvedValue({ file: makeFile(), role: "viewer" }),
+      });
+      const service = createFilesService(repo, mockDb);
+
+      await expect(
+        service.updateFile("file-1", "user-1", { filename: "hero.aseprite", file: Readable.from([]) }),
+      ).rejects.toBeInstanceOf(ForbiddenError);
+    });
+
+    it("throws LockedError when file is locked by another user", async () => {
+      const { LockedError } = await import("../../../errors/index.js");
+      const repo = makeRepo({
+        findFileWithRole: vi.fn().mockResolvedValue({
+          file: makeFile({
+            lockedBy: "other-user",
+            lockExpiresAt: new Date(Date.now() + 60_000),
+          }),
+          role: "editor",
+        }),
+      });
+      const service = createFilesService(repo, mockDb);
+
+      await expect(
+        service.updateFile("file-1", "user-1", { filename: "hero.aseprite", file: Readable.from([]) }),
+      ).rejects.toBeInstanceOf(LockedError);
+    });
+
+    it("returns isDuplicate=true when hash matches current version", async () => {
+      const { storage } = await import("../../../lib/storage.js");
+      vi.mocked(storage.save).mockResolvedValueOnce({ hash: "abc123", sizeBytes: 1024 });
+
+      const repo = makeRepo({
+        findFileWithRole: vi.fn().mockResolvedValue({ file: makeFile(), role: "editor" }),
+        findVersionById: vi.fn().mockResolvedValue(makeVersion({ hashSha256: "abc123" })),
+      });
+      const service = createFilesService(repo, mockDb);
+
+      const result = await service.updateFile("file-1", "user-1", {
+        filename: "hero.aseprite",
+        file: Readable.from([]),
+      });
+
+      expect(result.isDuplicate).toBe(true);
+      expect(repo.createVersion).not.toHaveBeenCalled();
+      expect(storage.delete).toHaveBeenCalled(); // duplicate discarded
+    });
+
+    it("creates a new version when hash differs", async () => {
+      const { storage } = await import("../../../lib/storage.js");
+      vi.mocked(storage.save).mockResolvedValueOnce({ hash: "newhash", sizeBytes: 2048 });
+
+      const repo = makeRepo({
+        findFileWithRole: vi.fn().mockResolvedValue({ file: makeFile(), role: "editor" }),
+        findVersionById: vi.fn().mockResolvedValue(makeVersion({ hashSha256: "oldhash" })),
+        getLatestVersionNumber: vi.fn().mockResolvedValue(1),
+        countVersions: vi.fn().mockResolvedValue(2),
+      });
+      const service = createFilesService(repo, mockDb);
+
+      const result = await service.updateFile("file-1", "user-1", {
+        filename: "hero.aseprite",
+        file: Readable.from([]),
+      });
+
+      expect(result.isDuplicate).toBe(false);
+      expect(result.version.versionNumber).toBe(2);
+      expect(repo.createVersion).toHaveBeenCalledOnce();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  describe("restoreVersion (T6)", () => {
+    it("throws ForbiddenError for viewers", async () => {
+      const repo = makeRepo({
+        findFileWithRole: vi.fn().mockResolvedValue({ file: makeFile(), role: "viewer" }),
+      });
+      const service = createFilesService(repo, mockDb);
+
+      await expect(
+        service.restoreVersion("file-1", "user-1", 1),
+      ).rejects.toBeInstanceOf(ForbiddenError);
+    });
+
+    it("throws NotFoundError for unknown version number", async () => {
+      const repo = makeRepo({
+        findVersionByFileAndNumber: vi.fn().mockResolvedValue(null),
+      });
+      const service = createFilesService(repo, mockDb);
+
+      await expect(
+        service.restoreVersion("file-1", "user-1", 99),
+      ).rejects.toBeInstanceOf(NotFoundError);
+    });
+
+    it("creates a copy as a new version and updates current pointer", async () => {
+      const { storage } = await import("../../../lib/storage.js");
+      const repo = makeRepo({
+        getLatestVersionNumber: vi.fn().mockResolvedValue(3),
+      });
+      const service = createFilesService(repo, mockDb);
+
+      const restored = await service.restoreVersion("file-1", "user-1", 1);
+
+      expect(storage.copy).toHaveBeenCalled();
+      expect(restored.versionNumber).toBe(4);
+      expect(repo.updateCurrentVersion).toHaveBeenCalledOnce();
     });
   });
 });

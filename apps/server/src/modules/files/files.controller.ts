@@ -105,6 +105,59 @@ export function createFilesController(service: FilesService) {
 
       await archive.finalize();
     },
+
+    // ------------------------------------------------------------------
+    // T6 — versioning handlers
+    // ------------------------------------------------------------------
+
+    async updateFile(request: FastifyRequest, reply: FastifyReply) {
+      if (!request.userId) throw new UnauthorizedError();
+      const { id: fileId } = request.params as { id: string };
+
+      const data = await request.file();
+      if (!data) throw new ValidationError("No file provided in the request");
+
+      const result = await service.updateFile(fileId, request.userId, {
+        filename: data.filename,
+        file: data.file,
+      });
+
+      const status = result.isDuplicate ? 200 : 201;
+      return reply.status(status).send(ok(result));
+    },
+
+    async listVersions(request: FastifyRequest, reply: FastifyReply) {
+      if (!request.userId) throw new UnauthorizedError();
+      const { id: fileId } = request.params as { id: string };
+
+      let query;
+      try {
+        query = listFilesQuerySchema.parse(request.query);
+      } catch (e) {
+        if (e instanceof ZodError) {
+          throw new ValidationError("Invalid query params", {
+            fields: e.flatten().fieldErrors,
+          });
+        }
+        throw e;
+      }
+
+      const result = await service.listVersions(fileId, request.userId, query);
+      return reply.send(ok(result.versions, result.meta));
+    },
+
+    async restoreVersion(request: FastifyRequest, reply: FastifyReply) {
+      if (!request.userId) throw new UnauthorizedError();
+      const { id: fileId, v } = request.params as { id: string; v: string };
+
+      const versionNumber = parseInt(v, 10);
+      if (isNaN(versionNumber) || versionNumber < 1) {
+        throw new ValidationError("Version number must be a positive integer");
+      }
+
+      const version = await service.restoreVersion(fileId, request.userId, versionNumber);
+      return reply.status(201).send(ok(version));
+    },
   };
 }
 
