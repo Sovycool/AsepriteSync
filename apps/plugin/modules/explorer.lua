@@ -55,10 +55,16 @@ local function safe_join(dir, name)
 end
 
 -- Build the display label shown in the file listbox.
-local function file_label(f)
+-- currentUserId may be nil (not logged in), in which case any lock shows the
+-- generic lock symbol.
+local function file_label(f, currentUserId)
   local label = f.name
   if f.lockedBy then
-    label = label .. '  \xF0\x9F\x94\x92'  -- UTF-8 lock emoji (🔒)
+    if f.lockedBy == currentUserId then
+      label = label .. '  \xF0\x9F\x94\x92 (you)'  -- 🔒 (you)
+    else
+      label = label .. '  \xF0\x9F\x94\x92'        -- 🔒
+    end
   end
   return label
 end
@@ -135,10 +141,12 @@ function Explorer:open()
     projectNames[#projectNames + 1] = p.name .. '  [' .. (p.role or '?') .. ']'
   end
 
+  local currentUserId = self._auth:getUser() and self._auth:getUser().id or nil
+
   local function fileItems()
     local options = {}
     for _, f in ipairs(state.files) do
-      options[#options + 1] = file_label(f)
+      options[#options + 1] = file_label(f, currentUserId)
     end
     return options
   end
@@ -203,7 +211,13 @@ function Explorer:open()
       local f = state.files[state.fileIdx]
       if f then
         local info = ''
-        if f.lockedBy then info = info .. 'Locked  •  ' end
+        if f.lockedBy then
+          if f.lockedBy == currentUserId then
+            info = info .. 'Locked by you  •  '
+          else
+            info = info .. 'Locked by another user  •  '
+          end
+        end
         if f.updatedAt then info = info .. f.updatedAt:sub(1, 10) end
         dlg:modify{ id = 'info', text = info }
       else
@@ -295,14 +309,35 @@ function Explorer:_downloadAndOpen(file)
     -- Open the file in Aseprite
     app.open(destPath)
 
-    -- Offer auto-lock (only when Sync is available and file is not already locked)
-    if self._sync and not file.lockedBy then
+    -- Determine lock ownership
+    local myId = self._auth:getUser() and self._auth:getUser().id or nil
+    local lockedByMe    = file.lockedBy ~= nil and file.lockedBy == myId
+    local lockedByOther = file.lockedBy ~= nil and not lockedByMe
+
+    if lockedByMe then
+      -- Already locked by the current user — nothing to do, just inform
+      local infoDlg = Dialog('AsepriteSync')
+      infoDlg:label{ label = file.name .. ' is open.' }
+      infoDlg:label{ label = 'You already hold the lock on this file.' }
+      infoDlg:button{ id = 'ok', text = 'OK', focus = true }
+      infoDlg:show{ wait = true }
+
+    elseif lockedByOther then
+      -- Locked by a teammate — warn, but still allow opening read-only
+      local warnDlg = Dialog('AsepriteSync — File is locked')
+      warnDlg:label{ label = file.name .. ' is currently locked by another user.' }
+      warnDlg:label{ label = 'You can view it, but uploading changes may be rejected.' }
+      warnDlg:button{ id = 'ok', text = 'OK', focus = true }
+      warnDlg:show{ wait = true }
+
+    elseif self._sync then
+      -- File is free — offer to lock it
       local lockDlg = Dialog('AsepriteSync — Lock for editing?')
       lockDlg:label{ label = file.name .. ' is now open.' }
       lockDlg:label{ label = 'Lock it so teammates know you are editing?' }
       lockDlg:separator()
-      lockDlg:button{ id = 'yes', text = 'Lock',      focus = true  }
-      lockDlg:button{ id = 'no',  text = 'Skip',      focus = false }
+      lockDlg:button{ id = 'yes', text = 'Lock',  focus = true  }
+      lockDlg:button{ id = 'no',  text = 'Skip',  focus = false }
       lockDlg:show{ wait = true }
 
       if lockDlg.data.yes then
@@ -313,16 +348,8 @@ function Explorer:_downloadAndOpen(file)
             eDlg:button{ id = 'ok', text = 'OK', focus = true }
             eDlg:show{ wait = true }
           end
-          -- Success is silent — the lock dot shows in the web UI
         end)
       end
-    elseif file.lockedBy then
-      -- File is locked by someone else — warn the user
-      local warnDlg = Dialog('AsepriteSync — File is locked')
-      warnDlg:label{ label = file.name .. ' is currently locked by another user.' }
-      warnDlg:label{ label = 'You can view it, but uploading changes may be rejected.' }
-      warnDlg:button{ id = 'ok', text = 'OK', focus = true }
-      warnDlg:show{ wait = true }
     end
   end)
 end
