@@ -67,7 +67,7 @@ function Api:request(method, path, body, callback)
     bodyStr = encoded
   end
 
-  http.request{
+  app.http.request{
     url     = self._baseUrl .. path,
     method  = method,
     headers = headers,
@@ -176,7 +176,7 @@ function Api:upload(path, filePath, filename, method, callback)
     headers['Authorization'] = 'Bearer ' .. self._token
   end
 
-  http.request{
+  app.http.request{
     url     = self._baseUrl .. path,
     method  = method,
     headers = headers,
@@ -214,7 +214,7 @@ function Api:downloadBinary(path, callback)
     headers['Authorization'] = 'Bearer ' .. self._token
   end
 
-  http.request{
+  app.http.request{
     url     = self._baseUrl .. path,
     method  = 'GET',
     headers = headers,

@@ -343,22 +343,18 @@ end
 -- ---------------------------------------------------------------------------
 
 function init(plugin)
+
+  print('[AsepriteSync] Initializing plugin…')
+
   -- Initialise modules in dependency order
   storage  = Storage.new(plugin.preferences)
   api      = Api.new('http://localhost:4000')  -- base URL overwritten by Auth.new via storage
   auth     = Auth.new(api, storage)
-  sync     = Sync.new(api, auth, plugin.dataPath)
-  explorer = Explorer.new(api, auth, plugin.dataPath)
+  sync     = Sync.new(api, auth, plugin.path)
+  explorer = Explorer.new(api, auth, plugin.path)
   explorer:setSync(sync)  -- inject after both are created (avoids circular dep)
 
-  -- Expose to other scripts
-  plugin._asepritesync = {
-    storage  = storage,
-    api      = api,
-    auth     = auth,
-    sync     = sync,
-    explorer = explorer,
-  }
+  print('[AsepriteSync] Plugin initialized.')
 
   -- Create the "AsepriteSync" submenu inside File > Scripts
   plugin:newMenuGroup{
@@ -409,6 +405,8 @@ function init(plugin)
     group   = 'asepritesync',
     onclick = cmd_settings,
   }
+
+  print('[AsepriteSync] Commands registered.')
 
   -- Optionally verify the stored token in the background on startup
   if auth:isLoggedIn() then
