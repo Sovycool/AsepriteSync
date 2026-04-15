@@ -36,7 +36,7 @@ cp .env.example .env
 # Edit .env — at minimum set JWT_SECRET (≥32 chars)
 
 # 3. Start Postgres + Redis
-docker compose up -d
+docker-compose up -d
 
 # 4. Run migrations and seed
 pnpm --filter @asepritesync/db migrate
