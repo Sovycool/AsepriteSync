@@ -127,7 +127,7 @@ export const projectsApi = {
   },
 
   delete(token: string, id: string): Promise<void> {
-    return authedRequest<void>(`/projects/${id}`, token, { method: "DELETE" });
+    return authedRequest<void>(`/projects/${id}`, token, { method: "DELETE", body: "{}" });
   },
 };
 
@@ -166,6 +166,7 @@ export const membersApi = {
   remove(token: string, projectId: string, userId: string): Promise<void> {
     return authedRequest<void>(`/projects/${projectId}/members/${userId}`, token, {
       method: "DELETE",
+      body: "{}",
     });
   },
 };
@@ -285,6 +286,7 @@ export const versionsApi = {
   restore(token: string, fileId: string, versionNumber: number): Promise<FileVersion> {
     return authedRequest<FileVersion>(`/files/${fileId}/versions/${versionNumber}/restore`, token, {
       method: "POST",
+      body: "{}",
     });
   },
 };
@@ -323,7 +325,7 @@ export const filesApi = {
   },
 
   delete(token: string, fileId: string): Promise<void> {
-    return authedRequest<void>(`/files/${fileId}`, token, { method: "DELETE" });
+    return authedRequest<void>(`/files/${fileId}`, token, { method: "DELETE", body: "{}" });
   },
 
   lock(token: string, fileId: string): Promise<LockResult> {
@@ -366,11 +368,11 @@ export const authApi = {
   },
 
   refresh() {
-    return request<LoginResult>("/auth/refresh", { method: "POST" });
+    return request<LoginResult>("/auth/refresh", { method: "POST", body: "{}" });
   },
 
   logout() {
-    return request<{ message: string }>("/auth/logout", { method: "POST" });
+    return request<{ message: string }>("/auth/logout", { method: "POST", body: "{}" });
   },
 
   requestPasswordReset(email: string) {
