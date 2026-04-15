@@ -5,6 +5,9 @@
   "description": "Synchronize and collaborate on Aseprite files via AsepriteSync server",
   "author": "Helios",
   "license": "MIT",
+  "scripts": {
+    "bundle": "cd ../.. && zip -r apps/plugin/asepritesync.aseprite-extension apps/plugin/package.json apps/plugin/plugin.lua apps/plugin/modules/ && echo 'Built: apps/plugin/asepritesync.aseprite-extension'"
+  },
   "contributes": {
     "scripts": [
       {

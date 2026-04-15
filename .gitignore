@@ -38,6 +38,9 @@ Thumbs.db
 # Turbo cache
 .turbo/
 
+# Plugin build artifacts
+*.aseprite-extension
+
 # Logs
 *.log
 npm-debug.log*
